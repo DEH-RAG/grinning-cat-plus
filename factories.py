@@ -53,7 +53,6 @@ from .llms.configs import (
     LLMAnthropicChatConfig,
     LLMMistralAIChatConfig,
     LLMGroqChatConfig,
-    LLMLiteLLMChatConfig,
 )
 
 
@@ -73,7 +72,6 @@ def factory_allowed_llms(allowed: List[LLMSettings], cat) -> List:
         LLMAnthropicChatConfig,
         LLMMistralAIChatConfig,
         LLMGroqChatConfig,
-        LLMLiteLLMChatConfig,
     ]
 
 

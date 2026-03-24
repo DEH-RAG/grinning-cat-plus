@@ -48,7 +48,6 @@ Enabled via `factory_allowed_llms` in `factories.py`:
 - Anthropic
 - Mistral AI
 - Groq
-- LiteLLM
 
 ### Embedders
 

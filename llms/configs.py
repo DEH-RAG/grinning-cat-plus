@@ -7,7 +7,6 @@ from langchain_community.llms import (
 )
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
-from langchain_litellm import ChatLiteLLM
 from langchain_mistralai import ChatMistralAI
 from langchain_openai import AzureChatOpenAI
 from langchain_openai import AzureOpenAI
@@ -313,26 +312,3 @@ class LLMGroqChatConfig(LLMSettings):
     @classmethod
     def pyclass(cls) -> Type[ChatGroq]:
         return ChatGroq
-
-
-class LLMLiteLLMChatConfig(LLMSettings):
-    api_key: str
-    model: str = "perplexity/sonar-pro"
-    temperature: float = 0.7
-    max_tokens: int | None = None
-    max_retries: int = 2
-    top_p: int | None = None
-    top_k: int | None = None
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "humanReadableName": "LiteLLM",
-            "description": "Configuration for LiteLLM",
-            "link": "https://www.litellm.ai/",
-        },
-        extra="allow",
-    )
-
-    @classmethod
-    def pyclass(cls) -> Type[ChatLiteLLM]:
-        return ChatLiteLLM
