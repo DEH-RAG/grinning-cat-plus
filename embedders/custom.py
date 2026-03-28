@@ -9,6 +9,8 @@ from sentence_transformers import SentenceTransformer
 from cat.services.factory.embedder import MultimodalEmbeddings
 from cat.utils import retrieve_image
 
+_EMBEDDERS_MODELS_CACHE = {}
+
 
 class CustomOpenAIEmbeddings(Embeddings):
     """Use OpenAI-compatible API as embedder (like llama-cpp-python)."""
@@ -53,7 +55,7 @@ class CustomOpenAIEmbeddings(Embeddings):
 
 class CustomOllamaEmbeddings(Embeddings):
     """Use Ollama to serve embedding models."""
-    def __init__(self, base_url, model):
+    def __init__(self, base_url: str, model: str):
         self.url = os.path.join(base_url, "api/embeddings")
         self.model = model
 
@@ -103,27 +105,29 @@ class Qwen3LocalEmbeddings(Embeddings):
     Local Qwen3 embeddings using HuggingFace Sentence Transformers.
     Best for: Full control, no external dependencies, offline usage
     """
-    def __init__(self, model_name: str, device: str = "cuda", model: Any = None):
+    def __init__(self, model_name: str):
         self.model_name = model_name
-        self.device = device
-        self.model = model
-        self._load_model()
 
-    def _load_model(self):
+    def _load_model(self) -> SentenceTransformer:
         """Lazy load the model"""
-        if self.model is None:
-            self.model = SentenceTransformer(self.model_name, device=self.device, trust_remote_code=True)
+        global _EMBEDDERS_MODELS_CACHE
+
+        model = _EMBEDDERS_MODELS_CACHE.get("Qwen3LocalEmbeddings", {}).get(self.model_name)
+        if model is None:
+            model = SentenceTransformer(self.model_name, trust_remote_code=True)
+            _EMBEDDERS_MODELS_CACHE.setdefault("Qwen3LocalEmbeddings", {})[self.model_name] = model
+        return model
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Embed a list of documents"""
-        self._load_model()
-        embeddings = self.model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
+        model = self._load_model()
+        embeddings = model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
         return embeddings.tolist()
 
     def embed_query(self, text: str) -> List[float]:
         """Embed a single query"""
-        self._load_model()
-        embedding = self.model.encode(text, show_progress_bar=False, convert_to_numpy=True)
+        model = self._load_model()
+        embedding = model.encode(text, show_progress_bar=False, convert_to_numpy=True)
         return embedding.tolist()
 
 

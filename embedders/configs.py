@@ -235,8 +235,6 @@ class EmbedderJinaConfig(EmbedderSettings):
 
 class Qwen3LocalEmbeddingsConfig(EmbedderSettings):
     model_name: str
-    device: str = "cuda"
-    model: Any = None
 
     model_config = ConfigDict(
         json_schema_extra={
