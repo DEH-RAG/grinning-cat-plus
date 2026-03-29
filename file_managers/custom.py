@@ -18,6 +18,12 @@ class AWSFileManager(BaseFileManager):
         self.bucket_name = bucket_name
         super().__init__()
 
+    def _eq(self, other: "AWSFileManager") -> bool:
+        return (
+                self.__class__.__name__ == other.__class__.__name__
+                and self.bucket_name == other.bucket_name
+        )
+
     def _download_file(self, file_path: str) -> bytes | None:
         try:
             response = self.s3.get_object(Bucket=self.bucket_name, Key=file_path)
@@ -102,9 +108,18 @@ class AWSFileManager(BaseFileManager):
 class AzureFileManager(BaseFileManager):
     def __init__(self, connection_string: str, container_name: str):
         from azure.storage.blob import BlobServiceClient
-        self.blob_service = BlobServiceClient.from_connection_string(connection_string)
-        self.container = self.blob_service.get_container_client(container_name)
+
+        self.connection_string = connection_string
+        self.container = (
+            BlobServiceClient.from_connection_string(self.connection_string).get_container_client(container_name)
+        )
         super().__init__()
+
+    def _eq(self, other: "AzureFileManager") -> bool:
+        return (
+                self.__class__.__name__ == other.__class__.__name__
+                and self.connection_string == other.connection_string
+        )
 
     def _download_file(self, file_path: str) -> bytes | None:
         try:
@@ -184,9 +199,18 @@ class AzureFileManager(BaseFileManager):
 class GoogleCloudFileManager(BaseFileManager):
     def __init__(self, bucket_name: str, credentials_path: str):
         from google.cloud import storage
-        self.storage_client = storage.Client.from_service_account_json(credentials_path)
-        self.bucket = self.storage_client.bucket(bucket_name)
+
+        self.bucket_name = bucket_name
+        self.credentials_path = credentials_path
+        self.bucket = storage.Client.from_service_account_json(credentials_path).bucket(bucket_name)
         super().__init__()
+
+    def _eq(self, other: "GoogleCloudFileManager") -> bool:
+        return (
+                self.__class__.__name__ == other.__class__.__name__
+                and self.bucket_name == other.bucket_name
+                and self.credentials_path == other.credentials_path
+        )
 
     def _download_file(self, file_path: str) -> bytes | None:
         try:
