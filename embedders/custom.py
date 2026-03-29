@@ -3,10 +3,9 @@ import os
 from typing import Any, Dict, List
 import httpx
 import requests
-from langchain_core.embeddings import Embeddings
 from sentence_transformers import SentenceTransformer
 
-from cat.services.factory.embedder import MultimodalEmbeddings
+from cat import Embeddings, MultimodalEmbeddings
 from cat.utils import retrieve_image
 
 _EMBEDDERS_MODELS_CACHE = {}
