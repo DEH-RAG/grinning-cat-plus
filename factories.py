@@ -132,4 +132,4 @@ async def lizard_notify_plugin_installation(plugin_id: str, plugin_path: str, li
         if (ccat := await lizard.get_cheshire_cat(ccat_id)) is None:
             continue
 
-        ccat.plugin_manager.toggle_plugin(plugin_id)
+        await ccat.plugin_manager.toggle_plugin(plugin_id)
