@@ -121,15 +121,15 @@ def factory_allowed_chunkers(allowed: List[ChunkerSettings], cat) -> List:
 
 
 @hook(priority=1)
-def lizard_notify_plugin_installation(plugin_id: str, plugin_path: str, lizard: BillTheLizard):
+async def lizard_notify_plugin_installation(plugin_id: str, plugin_path: str, lizard: BillTheLizard):
     this_plugin_id = lizard.mad_hatter.get_plugin().id
     if this_plugin_id != plugin_id:
         return
 
     # for each Cheshire Cat, activate this plugin
-    ccat_ids = crud_settings.get_agents_main_keys()
+    ccat_ids = await crud_settings.get_agents_main_keys()
     for ccat_id in ccat_ids:
-        if (ccat := lizard.get_cheshire_cat(ccat_id)) is None:
+        if (ccat := await lizard.get_cheshire_cat(ccat_id)) is None:
             continue
 
         ccat.plugin_manager.toggle_plugin(plugin_id)

@@ -21,15 +21,16 @@ nltk.download("averaged_perceptron_tagger")
 
 
 @hook(priority=1)
-def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
+async def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
     lizard = BillTheLizard()
-    embedder_config: EmbedderSettings | None = ServiceFactory(
+    sp = ServiceFactory(
         agent_key=lizard.agent_key,
         hook_manager=lizard.plugin_manager,
         factory_allowed_handler_name="factory_allowed_embedders",
         setting_category="embedder",
         schema_name="languageEmbedderName",
-    ).get_config_class_from_adapter(lizard.embedder)
+    )
+    embedder_config: EmbedderSettings | None = await sp.get_config_class_from_adapter(lizard.embedder)
     if not embedder_config:
         return file_handlers
 
