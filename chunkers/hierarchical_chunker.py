@@ -15,6 +15,8 @@ import re
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents.base import Document
 
+from .constants import DISPLAY_FORMULA, INLINE_FORMULA, LATEX_ENV
+
 
 def _extract_sections(text: str) -> List[Dict[str, Any]]:
     """
@@ -347,11 +349,6 @@ class MathAwareHierarchicalChunker:
     3. Keeps formulas with surrounding context
     4. Handles multimodal content
     """
-    # Formula patterns
-    DISPLAY_FORMULA = r"\$\$(.*?)\$\$"
-    INLINE_FORMULA = r"(?<!\$)\$(?!\$)(.*?)\$(?!\$)"
-    LATEX_ENV = r"\\begin\{(equation|align|gather|multiline)\*?\}(.*?)\\end\{\1\*?\}"
-
     def __init__(
         self,
         chunk_size: int = 1000,
@@ -409,7 +406,7 @@ class MathAwareHierarchicalChunker:
         counter = 0
 
         # Protect display formulas
-        for match in re.finditer(self.DISPLAY_FORMULA, text, re.DOTALL):
+        for match in re.finditer(DISPLAY_FORMULA, text, re.DOTALL):
             formula = match.group(0)
             placeholder = f"__FORMULA_{counter}__"
             formula_map[placeholder] = formula
@@ -417,7 +414,7 @@ class MathAwareHierarchicalChunker:
             counter += 1
 
         # Protect LaTeX environments
-        for match in re.finditer(self.LATEX_ENV, text, re.DOTALL):
+        for match in re.finditer(LATEX_ENV, text, re.DOTALL):
             formula = match.group(0)
             placeholder = f"__FORMULA_{counter}__"
             formula_map[placeholder] = formula
@@ -425,7 +422,7 @@ class MathAwareHierarchicalChunker:
             counter += 1
 
         # Protect inline formulas
-        for match in re.finditer(self.INLINE_FORMULA, text):
+        for match in re.finditer(INLINE_FORMULA, text):
             formula = match.group(0)
             placeholder = f"__FORMULA_{counter}__"
             formula_map[placeholder] = formula

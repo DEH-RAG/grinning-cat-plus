@@ -7,6 +7,7 @@ from .custom import (
     HTMLSemanticChunker,
     HierarchicalChunker,
     MathAwareHierarchicalChunker,
+    MathAwareSemanticChunker,
     JSONChunker,
     TokenSpacyChunker,
     TokenNLTKChunker,
@@ -143,3 +144,26 @@ class MathAwareHierarchicalChunkerSettings(ChunkerSettings):
     @classmethod
     def pyclass(cls) -> Type[MathAwareHierarchicalChunker]:
         return MathAwareHierarchicalChunker
+
+
+class MathAwareSemanticChunkerSettings(ChunkerSettings):
+    cluster_threshold: float = 0.4
+    similarity_threshold: float = 0.4
+    max_tokens: int = 512
+    formula_context_boost: float = 0.3
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "humanReadableName": "Math-aware semantic chunker",
+            "description": (
+                "Semantic chunker with formula-awareness: formulas are protected before "
+                "embedding so similarity is driven by surrounding prose, and formula-adjacent "
+                "chunks receive a configurable similarity boost to stay together."
+            ),
+            "link": "",
+        }
+    )
+
+    @classmethod
+    def pyclass(cls) -> Type[MathAwareSemanticChunker]:
+        return MathAwareSemanticChunker
