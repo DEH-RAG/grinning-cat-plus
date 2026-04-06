@@ -14,6 +14,7 @@ from .chunkers.configs import (
     TokenNLTKChunkerSettings,
     HierarchicalChunkerSettings,
     MathAwareHierarchicalChunkerSettings,
+    MathAwareSemanticChunkerSettings,
 )
 from .embedders.configs import (
     EmbedderQdrantFastEmbedConfig,
@@ -117,6 +118,7 @@ def factory_allowed_chunkers(allowed: List[ChunkerSettings], cat) -> List:
         TokenNLTKChunkerSettings,
         HierarchicalChunkerSettings,
         MathAwareHierarchicalChunkerSettings,
+        MathAwareSemanticChunkerSettings,
     ]
 
 
