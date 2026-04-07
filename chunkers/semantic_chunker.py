@@ -28,7 +28,7 @@ class BaseSemanticChunker(ABC):
         return self._embedder
 
     @embedder.setter
-    def embedder(self, embedder):
+    def embedder(self, embedder: Embeddings):
         self._embedder = embedder
 
     def _calculate_clusters(self, adjusted: np.ndarray, n: int) -> List:
