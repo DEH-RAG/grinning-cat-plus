@@ -19,10 +19,7 @@ class AWSFileManager(BaseFileManager):
         super().__init__()
 
     def _eq(self, other: "AWSFileManager") -> bool:
-        return (
-                self.__class__.__name__ == other.__class__.__name__
-                and self.bucket_name == other.bucket_name
-        )
+        return self.bucket_name == other.bucket_name
 
     def _download_file(self, file_path: str) -> bytes | None:
         try:
@@ -116,10 +113,7 @@ class AzureFileManager(BaseFileManager):
         super().__init__()
 
     def _eq(self, other: "AzureFileManager") -> bool:
-        return (
-                self.__class__.__name__ == other.__class__.__name__
-                and self.connection_string == other.connection_string
-        )
+        return self.connection_string == other.connection_string
 
     def _download_file(self, file_path: str) -> bytes | None:
         try:
@@ -206,11 +200,7 @@ class GoogleCloudFileManager(BaseFileManager):
         super().__init__()
 
     def _eq(self, other: "GoogleCloudFileManager") -> bool:
-        return (
-                self.__class__.__name__ == other.__class__.__name__
-                and self.bucket_name == other.bucket_name
-                and self.credentials_path == other.credentials_path
-        )
+        return self.bucket_name == other.bucket_name and self.credentials_path == other.credentials_path
 
     def _download_file(self, file_path: str) -> bytes | None:
         try:

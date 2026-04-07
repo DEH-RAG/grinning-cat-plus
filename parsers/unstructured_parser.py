@@ -1,3 +1,4 @@
+import dataclasses
 import tempfile
 import os
 from typing import Iterator, Type, Any
@@ -38,15 +39,50 @@ class UnstructuredParser(BaseBlobParser):
         if isinstance(value, dict):
             return {k: UnstructuredParser._serialize_metadata_value(v) for k, v in value.items()}
 
-        # Handle objects with __dict__ (like CoordinatesMetadata)
-        if hasattr(value, '__dict__'):
+        # Handle Pydantic v2 models (unstructured >= 0.10 usa Pydantic v2)
+        if hasattr(value, "model_dump") and callable(value.model_dump):
+            try:
+                return UnstructuredParser._serialize_metadata_value(value.model_dump())
+            except Exception:
+                pass  # fallthrough to next strategy
+
+        # Handle Pydantic v1 models (retrocompatibilità)
+        if hasattr(value, "dict") and callable(value.dict) and not isinstance(value, dict):
+            try:
+                return UnstructuredParser._serialize_metadata_value(value.dict())
+            except Exception:
+                pass  # fallthrough to next strategy
+
+        # Handle dataclasses (CoordinatesMetadata è un dataclass)
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            try:
+                return UnstructuredParser._serialize_metadata_value(dataclasses.asdict(value))  # type: ignore[arg-type]
+            except Exception:
+                pass  # fallthrough to next strategy
+
+        # Handle generic objects with instance attributes or __slots__.
+        # getattr(obj, "__dict__", {}) and getattr(cls, "__mro__", ()) are used
+        # instead of direct dunder attribute access (value.__dict__, type.__mro__)
+        # and instead of vars() — all forbidden by the AST security scanner.
+        if hasattr(value, "__dict__") or hasattr(type(value), "__slots__"):
+            instance_attrs = getattr(value, "__dict__", {}) or {}
+
+            # Capture attributes declared on __slots__ not present in __dict__
+            slot_attrs = {}
+            for cls in getattr(type(value), "__mro__", ()):
+                for slot in getattr(cls, "__slots__", ()):
+                    if not slot.startswith("_") and slot not in instance_attrs:
+                        try:
+                            slot_attrs[slot] = getattr(value, slot)
+                        except AttributeError:
+                            pass
+
             serialized = {}
-            for k, v in value.__dict__.items():
-                if not k.startswith('_'):  # Skip private attributes
+            for k, v in list({**instance_attrs, **slot_attrs}.items()):  # list() prevents RuntimeError on mutations
+                if not k.startswith("_"):
                     try:
                         serialized[k] = UnstructuredParser._serialize_metadata_value(v)
                     except (TypeError, ValueError):
-                        # If serialization fails, convert to string
                         serialized[k] = str(v)
             return serialized
 
