@@ -8,7 +8,7 @@ from langchain_text_splitters import (
     SpacyTextSplitter,
     NLTKTextSplitter,
 )
-from cat import BillTheLizard, BaseChunker, EmbeddedBaseChunker
+from cat import BaseChunker, EmbeddedBaseChunker
 
 from .semantic_chunker import SemanticChunker as SemanticAnalyzer, MathAwareSemanticChunker as MathAwareSemanticAnalyzer
 from .hierarchical_chunker import (
@@ -184,7 +184,7 @@ class MathAwareHierarchicalChunker(BaseChunker):
         )
 
 
-class MathAwareSemanticChunker(BaseChunker):
+class MathAwareSemanticChunker(EmbeddedBaseChunker):
     def __init__(
             self,
             cluster_threshold: float,
