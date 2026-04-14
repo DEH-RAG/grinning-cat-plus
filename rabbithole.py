@@ -30,7 +30,7 @@ async def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
         setting_category="embedder",
         schema_name="languageEmbedderName",
     )
-    embedder_config: EmbedderSettings | None = await sp.get_config_class_from_adapter(lizard.embedder)
+    embedder_config: EmbedderSettings | None = await sp.get_config_class_from_adapter(await lizard.embedder())
     if not embedder_config:
         return file_handlers
 
