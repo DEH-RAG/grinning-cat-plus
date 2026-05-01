@@ -168,3 +168,58 @@ From `plugin.json`:
 - Author: `Matteo Cacciola`
 - URL: `https://github.com/matteocacciola/grinning_cat_plus`
 
+## System dependencies
+
+The following system packages must be present in the Docker image or on the host
+running the Cheshire Cat AI instance.
+
+### Required for all deployments
+
+| Package | Purpose |
+|---|---|
+| `libmagic1` / `libmagic-dev` | MIME-type detection used by `unstructured` |
+| `poppler-utils` | PDF rendering (`pdftoppm`, `pdfinfo`) |
+| `libreoffice` | Converts legacy/ODF formats (ODP, ODT, PPT, DOC) to modern equivalents before text extraction |
+
+### Required for OCR and multimodal embedders
+
+| Package | Purpose |
+|---|---|
+| `tesseract-ocr` | OCR engine for images and scanned PDFs |
+| `tesseract-ocr-ita` | Italian language data (add other `tesseract-ocr-*` packs as needed) |
+
+### Required for additional document formats
+
+| Package | Purpose |
+|---|---|
+| `pandoc` ≥ 2.14.2 | Enables `.epub`, `.odt`, and `.rtf` support inside `unstructured` |
+| `ffmpeg` | Audio/video pre-processing for `FasterWhisperParser` |
+
+### Ubuntu / Debian one-liner
+
+```bash
+apt-get update && apt-get install -y \
+    libmagic1 \
+    poppler-utils \
+    libreoffice \
+    tesseract-ocr tesseract-ocr-ita \
+    pandoc \
+    ffmpeg
+```
+
+### Dockerfile snippet
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libmagic1 \
+    poppler-utils \
+    libreoffice \
+    tesseract-ocr tesseract-ocr-ita \
+    pandoc \
+    ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+```
+
+> **Note:** `libreoffice` adds roughly 300 MB to the image. If you never upload
+> ODP / ODS / ODT files you may omit it, but the plugin will raise a
+> `RuntimeError` if those MIME types are encountered at runtime.

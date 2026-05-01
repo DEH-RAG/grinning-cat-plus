@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
@@ -5,137 +7,96 @@ import tempfile
 from pathlib import Path
 from typing import Iterator
 
-from langchain_core.document_loaders import BaseBlobParser
-from langchain_core.documents.base import Blob, Document
+from langchain_core.document_loaders import BaseBlobParser, Blob
+from langchain_core.documents import Document
 
 
-_ODP_MIME  = "application/vnd.oasis.opendocument.presentation"
-_PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-_PPT_MIME  = "application/vnd.ms-powerpoint"
-
-# content_type hint forwarded to partition() to bypass libmagic misdetection
-_MIME_HINTS: dict[str, str] = {
-    ".pptx": _PPTX_MIME,
-    ".ppt":  _PPT_MIME,
-}
+# python-pptx can only open OOXML (.pptx).
+# ODP and legacy .ppt must be converted to PPTX via LibreOffice first.
+_NEEDS_CONVERSION: frozenset[str] = frozenset({".odp", ".ppt"})
 
 
-def _libreoffice_bin() -> str | None:
-    return shutil.which("libreoffice") or shutil.which("soffice")
+def _libreoffice_to_pptx(source_path: str) -> tuple[str, str]:
+    """Convert *source_path* to PPTX using LibreOffice headless.
 
-
-def _libreoffice_convert(source_path: str, target_ext: str) -> str:
-    binary = _libreoffice_bin()
+    Returns (pptx_path, tmpdir_to_cleanup).  Caller must delete tmpdir.
+    """
+    binary = shutil.which("libreoffice") or shutil.which("soffice")
     if not binary:
         raise RuntimeError(
-            "LibreOffice/soffice non trovato nel PATH: "
-            "necessario per convertire file ODF"
+            "LibreOffice / soffice not found in PATH. "
+            "Install it (e.g. `apt-get install libreoffice`) to ingest ODP / PPT files."
         )
     src = Path(source_path)
-    outdir = Path(tempfile.mkdtemp(prefix="odf-convert-"))
-    try:
-        proc = subprocess.run(
-            [binary, "--headless", "--convert-to", target_ext,
-             "--outdir", str(outdir), str(src)],
-            capture_output=True, text=True,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"Conversione LibreOffice fallita ({proc.returncode}): "
-                f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
-            )
-        converted = outdir / f"{src.stem}.{target_ext}"
-        if not converted.exists():
-            files = ", ".join(p.name for p in outdir.iterdir())
-            raise RuntimeError(
-                f"File convertito non trovato: atteso {converted.name}, "
-                f"presenti: {files}"
-            )
-        return str(converted)
-    except Exception:
+    outdir = Path(tempfile.mkdtemp(prefix="ppt-convert-"))
+    cmd = [binary, "--headless", "--convert-to", "pptx", "--outdir", str(outdir), str(src)]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
         shutil.rmtree(outdir, ignore_errors=True)
-        raise
-
-
-def _extract_pptx_text(pptx_path: str) -> list[tuple[int, str]]:
-    """Extract (slide_number, text) pairs directly via python-pptx.
-
-    Avoids any import of unstructured.partition.pptx which depends on
-    `unstructured.utils.lazyproperty` removed in unstructured >= 0.17.
-    """
-    from pptx import Presentation  # python-pptx is a direct dep of unstructured[pptx]
-
-    prs = Presentation(pptx_path)
-    results: list[tuple[int, str]] = []
-    for slide_num, slide in enumerate(prs.slides, start=1):
-        chunks: list[str] = []
-        for shape in slide.shapes:
-            if not shape.has_text_frame:
-                continue
-            for para in shape.text_frame.paragraphs:
-                line = "".join(run.text for run in para.runs).strip()
-                if line:
-                    chunks.append(line)
-        if chunks:
-            results.append((slide_num, "\n".join(chunks)))
-    return results
+        raise RuntimeError(
+            f"LibreOffice conversion failed (exit {proc.returncode}): "
+            f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        )
+    converted = outdir / f"{src.stem}.pptx"
+    if not converted.exists():
+        present = ", ".join(p.name for p in outdir.iterdir()) if outdir.exists() else "<none>"
+        shutil.rmtree(outdir, ignore_errors=True)
+        raise RuntimeError(
+            f"Expected {converted.name} after LibreOffice conversion, found: {present}"
+        )
+    return str(converted), str(outdir)
 
 
 class PowerPointParser(BaseBlobParser):
-    """Lightweight PowerPoint/ODP parser used in non-multimodal mode.
+    """Extract text from PPTX / PPT / ODP using python-pptx.
 
-    Strategy
-    --------
-    - .pptx  →  extract text directly via python-pptx (no unstructured import)
-    - .ppt   →  LibreOffice headless → .pptx → python-pptx
-    - .odp   →  LibreOffice headless → .pptx → python-pptx
-
-    Rationale: unstructured.partition.pptx (and its transitive imports from
-    unstructured.chunking / unstructured.utils) broke in unstructured >= 0.17
-    due to the removal of `lazyproperty`.  python-pptx is always available
-    because it is a direct dependency of `unstructured[pptx]`.
-
-    NOTE: Blob.as_temp_file() is not available in all langchain-core versions;
-    temp files are managed manually via tempfile.NamedTemporaryFile.
+    * PPTX  → opened directly.
+    * PPT / ODP → converted to PPTX via LibreOffice, then opened.
     """
 
     def lazy_parse(self, blob: Blob) -> Iterator[Document]:
-        source = blob.source or ""
-        suffix = os.path.splitext(source)[1].lower()
-        temp_path: str | None = None
-        converted_path: str | None = None
-        converted_dir: str | None = None
+        try:
+            from pptx import Presentation  # python-pptx
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(
+                "python-pptx is required. Add `python-pptx>=1.0.0` to requirements.txt."
+            ) from exc
+
+        suffix = os.path.splitext(blob.source or "")[1].lower() or ".pptx"
+        orig_tmp: str | None = None
+        conv_dir: str | None = None
 
         try:
+            # Write the blob to a named temp file with the original extension
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                temp_path = tmp.name
+                orig_tmp = tmp.name
                 tmp.write(blob.as_bytes())
 
-            if suffix in (".odp", ".ppt"):
-                # ODP/PPT → convert to PPTX first
-                converted_path = _libreoffice_convert(temp_path, "pptx")
-                converted_dir = str(Path(converted_path).parent)
-                pptx_path = converted_path
+            # For formats python-pptx cannot read, convert via LibreOffice first
+            if suffix in _NEEDS_CONVERSION:
+                pptx_path, conv_dir = _libreoffice_to_pptx(orig_tmp)
             else:
-                # .pptx (or unknown) → use as-is
-                pptx_path = temp_path
+                pptx_path = orig_tmp
 
-            slides = _extract_pptx_text(pptx_path)
-            for slide_num, text in slides:
-                metadata = blob.metadata.copy() if blob.metadata else {}
-                metadata.update({
-                    "source": source,
-                    "element_type": "NarrativeText",
-                    "page_number": slide_num,
-                })
-                yield Document(page_content=text, metadata=metadata)
-
+            prs = Presentation(pptx_path)
+            for slide_num, slide in enumerate(prs.slides, start=1):
+                texts: list[str] = []
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        for para in shape.text_frame.paragraphs:
+                            line = " ".join(run.text for run in para.runs).strip()
+                            if line:
+                                texts.append(line)
+                if texts:
+                    yield Document(
+                        page_content="\n".join(texts),
+                        metadata={
+                            "source": blob.source or orig_tmp,
+                            "slide": slide_num,
+                        },
+                    )
         finally:
-            for path in (temp_path, converted_path):
-                if path and os.path.exists(path):
-                    try:
-                        os.unlink(path)
-                    except Exception:
-                        pass
-            if converted_dir and os.path.isdir(converted_dir):
-                shutil.rmtree(converted_dir, ignore_errors=True)
+            if orig_tmp and os.path.exists(orig_tmp):
+                os.unlink(orig_tmp)
+            if conv_dir:
+                shutil.rmtree(conv_dir, ignore_errors=True)

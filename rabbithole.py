@@ -10,7 +10,6 @@ import nltk
 from langchain_community.document_loaders.parsers.audio import FasterWhisperParser
 from langchain_community.document_loaders.parsers.msword import MsWordParser
 from cat import hook, BillTheLizard, EmbedderSettings
-from cat.core_plugins.base_plugin.parsers import TableParser
 from cat.services.service_factory import ServiceFactory
 
 from .parsers import ExcelParser, OdsParser, PowerPointParser, UnstructuredParser, YoutubeParser
@@ -93,52 +92,7 @@ def _libreoffice_convert(source_path: str, target_ext: str) -> str:
         raise
 
 
-def partition_odp(filename: str | None = None, file=None, **kwargs):
-    from unstructured.partition.pptx import partition_pptx
 
-    if not filename:
-        raise ValueError("partition_odp richiede filename")
-    converted = _libreoffice_convert(filename, "pptx")
-    try:
-        return partition_pptx(filename=converted, **kwargs)
-    finally:
-        try:
-            os.unlink(converted)
-            shutil.rmtree(str(Path(converted).parent), ignore_errors=True)
-        except Exception:
-            pass
-
-
-def partition_ods(filename: str | None = None, file=None, **kwargs):
-    from unstructured.partition.xlsx import partition_xlsx
-
-    if not filename:
-        raise ValueError("partition_ods richiede filename")
-    converted = _libreoffice_convert(filename, "xlsx")
-    try:
-        return partition_xlsx(filename=converted, **kwargs)
-    finally:
-        try:
-            os.unlink(converted)
-            shutil.rmtree(str(Path(converted).parent), ignore_errors=True)
-        except Exception:
-            pass
-
-
-def partition_odg(filename: str | None = None, file=None, **kwargs):
-    from unstructured.partition.image import partition_image
-
-    if not filename:
-        raise ValueError("partition_odg richiede filename")
-    converted = _libreoffice_convert(filename, "png")
-    try:
-        return partition_image(filename=converted, **kwargs)
-    finally:
-        try:
-            os.unlink(converted)
-            shutil.rmtree(str(Path(converted).parent), ignore_errors=True)
-        except Exception:
-            pass
 
 
 def _register_odf_filetypes() -> None:
@@ -218,7 +172,6 @@ async def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
     is_multimodal = embedder_config.is_multimodal()
     word_parser = MsWordParser() if not is_multimodal else UnstructuredParser()
     powerpoint_parser = PowerPointParser() if not is_multimodal else UnstructuredParser()
-    excel_parser = TableParser() if not is_multimodal else UnstructuredParser()
 
     supported = _get_unstructured_supported_mimetypes()
     for mime_type, ft in supported.items():
