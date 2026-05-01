@@ -12,6 +12,7 @@ langchain-openai>=1.0.1
 langchain-unstructured>=0.1.6
 langchain-voyageai>=0.1.7
 nltk>=3.9.2
+odfpy
 pandas>=3.0.1
 pdfminer-six>=20260107
 pytube>=15.0.0

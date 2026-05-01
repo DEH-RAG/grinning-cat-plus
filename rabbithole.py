@@ -13,7 +13,7 @@ from cat import hook, BillTheLizard, EmbedderSettings
 from cat.core_plugins.base_plugin.parsers import TableParser
 from cat.services.service_factory import ServiceFactory
 
-from .parsers import PowerPointParser, UnstructuredParser, YoutubeParser
+from .parsers import ExcelParser, OdsParser, PowerPointParser, UnstructuredParser, YoutubeParser
 
 nltk.download("punkt")
 nltk.download("averaged_perceptron_tagger")
@@ -242,11 +242,11 @@ async def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document": word_parser,
         "application/vnd.ms-powerpoint": powerpoint_parser,
         "application/vnd.openxmlformats-officedocument.presentationml.presentation": powerpoint_parser,
-        "application/vnd.ms-excel": excel_parser,
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": excel_parser,
+        "application/vnd.ms-excel": ExcelParser(),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ExcelParser(),
         "application/vnd.oasis.opendocument.text": word_parser,
         "application/vnd.oasis.opendocument.presentation": powerpoint_parser,
-        "application/vnd.oasis.opendocument.spreadsheet": excel_parser,
+        "application/vnd.oasis.opendocument.spreadsheet": OdsParser(),
     })
 
     if is_multimodal:
