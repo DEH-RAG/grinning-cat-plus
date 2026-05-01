@@ -18,5 +18,5 @@ pytube>=15.0.0
 sentence-transformers>=5.1.2
 spacy>=3.8.11
 text-generation>=0.7.0
-unstructured[csv,docx,epub,image,md,msg,odt,org,pdf,pptx,rst,rtf,tsv,xlsx]>=0.18.27
+unstructured[all-docs]>=0.22
 youtube-transcript-api>=1.2.3
