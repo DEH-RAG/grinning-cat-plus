@@ -112,6 +112,8 @@ The parser hook `rabbithole_instantiates_parsers` dynamically switches behavior 
 ### Notable parser details
 
 - `parsers/unstructured_parser.py` enriches metadata with element type, table HTML, formula data, coordinates, page number, and optional image payload
+  - to support all mime types supported by unstructured you must install the packages
+    - libmagic-dev poppler-utils tesseract-ocr tesseract-ocr-{eng,ita} pandoc qpdf "libreoffice-*-nogui"
 - `parsers/youtube_parser.py` fetches transcript text for YouTube sources (languages set to `en` and `it`)
 - `rabbithole.py` downloads NLTK assets (`punkt`, `averaged_perceptron_tagger`) at import time
 
@@ -122,6 +124,8 @@ Because this is a plugin, installation depends on your Grinning Cat/Cheshire Cat
 Typical local flow:
 
 ```bash
+apt install -y --no-install-recommends libmagic-dev poppler-utils tesseract-ocr tesseract-ocr-{eng,ita} pandoc qpdf "libreoffice-*-nogui"
+
 # from your plugin root
 pip install -r requirements.txt
 ```
