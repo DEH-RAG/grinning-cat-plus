@@ -146,6 +146,7 @@ def _simulate_plugin(supported: Dict[str, object], is_multimodal: bool = False) 
         "audio/ogg":   "FasterWhisperParser",
         "audio/wav":   "FasterWhisperParser",
         "audio/webm":  "FasterWhisperParser",
+        "video/webm":  "FasterWhisperParser",
     })
 
     return handlers
