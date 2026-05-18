@@ -68,6 +68,7 @@ async def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
         "audio/ogg": FasterWhisperParser(),
         "audio/wav": FasterWhisperParser(),
         "audio/webm": FasterWhisperParser(),
+        "video/webm": FasterWhisperParser(),
     })
 
     if embedder_config.is_multimodal():
