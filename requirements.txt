@@ -1,3 +1,4 @@
+audioop-lts
 azure-storage-blob>=12.27.0
 boto3>=1.40.57
 fastembed>=0.7.3
