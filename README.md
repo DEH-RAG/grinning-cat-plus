@@ -102,7 +102,7 @@ The parser hook `rabbithole_instantiates_parsers` dynamically switches behavior 
 - PowerPoint (`application/vnd.ms-powerpoint`, `application/vnd.openxmlformats-officedocument.presentationml.presentation`)
 - Excel (`application/vnd.ms-excel`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`)
 - Video (`video/mp4`) via YouTube transcript extraction
-- Audio (`audio/mpeg`, `audio/mp3`, `audio/ogg`, `audio/wav`, `audio/webm`) via `FasterWhisperParser`
+- Audio (`audio/mpeg`, `audio/mp3`, `audio/ogg`, `audio/wav`, `audio/webm`) and video (`video/webm`) via `FasterWhisperParser`
 
 ### Conditional behavior
 
