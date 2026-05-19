@@ -14,6 +14,8 @@ from cat.services.service_factory import ServiceFactory
 
 from .parsers import ExcelParser, OdsParser, PowerPointParser, UnstructuredParser, YoutubeParser
 
+import ctranslate2
+
 nltk.download("punkt")
 nltk.download("averaged_perceptron_tagger")
 
@@ -208,14 +210,15 @@ async def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
             if _filetype_is_image(ft):
                 file_handlers[mime_type] = UnstructuredParser()
 
+    device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
     file_handlers.update({
         "video/mp4": YoutubeParser(),
-        "audio/mpeg": FasterWhisperParser(),
-        "audio/mp3": FasterWhisperParser(),
-        "audio/ogg": FasterWhisperParser(),
-        "audio/wav": FasterWhisperParser(),
-        "audio/webm": FasterWhisperParser(),
-        "video/webm": FasterWhisperParser(),
+        "audio/mpeg": FasterWhisperParser(device=device),
+        "audio/mp3": FasterWhisperParser(device=device),
+        "audio/ogg": FasterWhisperParser(device=device),
+        "audio/wav": FasterWhisperParser(device=device),
+        "audio/webm": FasterWhisperParser(device=device),
+        "video/webm": FasterWhisperParser(device=device),
     })
 
     return file_handlers
