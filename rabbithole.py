@@ -13,6 +13,8 @@ from cat import hook, BillTheLizard, EmbedderSettings
 from cat.services.service_factory import ServiceFactory
 
 from .parsers import ExcelParser, OdsParser, PowerPointParser, UnstructuredParser, YoutubeParser
+from .parsers.html_preserving_parser import RawHTMLParser
+from .chunkers.custom import HTMLSemanticChunker
 
 nltk.download("punkt")
 nltk.download("averaged_perceptron_tagger")
@@ -217,5 +219,10 @@ async def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
         "audio/webm": FasterWhisperParser(),
         "video/webm": FasterWhisperParser(),
     })
+
+    # Preserve raw HTML when HTMLSemanticChunker is active,
+    # so the chunker can split semantically on heading structure.
+    if hasattr(cat, "chunker") and isinstance(cat.chunker, HTMLSemanticChunker):
+        file_handlers["text/html"] = RawHTMLParser()
 
     return file_handlers
