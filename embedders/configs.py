@@ -1,7 +1,6 @@
 from typing import Type, Any
 from fastembed import TextEmbedding
 from langchain_cohere import CohereEmbeddings
-from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_mistralai import MistralAIEmbeddings
 from langchain_openai import OpenAIEmbeddings, AzureOpenAIEmbeddings
@@ -11,6 +10,7 @@ from cat.services.factory.embedder import EmbedderSettings, EmbedderMultimodalSe
 from cat.utils import Enum
 
 from .custom import (
+    CustomFastEmbedEmbeddings,
     CustomOpenAIEmbeddings,
     CustomOllamaEmbeddings,
     CustomJinaEmbedder,
@@ -124,8 +124,8 @@ class EmbedderQdrantFastEmbedConfig(EmbedderSettings):
     )
 
     @classmethod
-    def pyclass(cls) -> Type[FastEmbedEmbeddings]:
-        return FastEmbedEmbeddings
+    def pyclass(cls) -> Type[CustomFastEmbedEmbeddings]:
+        return CustomFastEmbedEmbeddings
 
 
 class EmbedderGeminiChatConfig(EmbedderSettings):

@@ -5,10 +5,40 @@ import httpx
 import requests
 from sentence_transformers import SentenceTransformer
 
+from langchain_community.embeddings import FastEmbedEmbeddings
 from cat import Embeddings, MultimodalEmbeddings
 from cat.utils import retrieve_image
 
 _EMBEDDERS_MODELS_CACHE = {}
+
+
+class CustomFastEmbedEmbeddings(Embeddings):
+    """Wrapper for FastEmbedEmbeddings that inherits from cat.Embeddings.
+
+    FastEmbedEmbeddings from langchain_community inherits from langchain_core.embeddings.Embeddings,
+    which is a sibling (not parent) of cat.Embeddings. The factory validation in
+    BaseFactoryConfigModel.get_from_config() requires issubclass(pyclass, cat.Embeddings),
+    so a wrapper is needed to pass the check.
+    """
+    def __init__(
+        self,
+        model_name: str = "BAAI/bge-base-en",
+        max_length: int = 512,
+        doc_embed_type: str = "passage",
+        cache_dir: str = "cat/data/models/fast_embed",
+    ):
+        self._inner = FastEmbedEmbeddings(
+            model_name=model_name,
+            max_length=max_length,
+            doc_embed_type=doc_embed_type,
+            cache_dir=cache_dir,
+        )
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return self._inner.embed_documents(texts)
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._inner.embed_query(text)
 
 
 class CustomOpenAIEmbeddings(Embeddings):
