@@ -174,8 +174,18 @@ async def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
         return file_handlers
 
     is_multimodal = embedder_config.is_multimodal()
-    word_parser = MsWordParser() if not is_multimodal else UnstructuredParser()
-    powerpoint_parser = PowerPointParser() if not is_multimodal else UnstructuredParser()
+    up_options = {  'strategy':"hi_res", 
+                    'extract_image_block_to_payload':True, 
+                    'extract_image_block_types':["Image", "Table"], 
+                  } if is_multimodal else {
+                    'strategy':"fast",
+                    'extract_images_in_pdf':False,
+                    'infer_table_structure':False,
+                    'extract_image_block_types':[],
+                  }
+    word_parser = MsWordParser() if not is_multimodal else UnstructuredParser(**up_options)
+    powerpoint_parser = PowerPointParser() if not is_multimodal else UnstructuredParser(**up_options)
+
 
     supported = _get_unstructured_supported_mimetypes()
     for mime_type, ft in supported.items():
@@ -187,12 +197,7 @@ async def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
             continue
         if mime_type in file_handlers:
             continue
-        file_handlers[mime_type] = UnstructuredParser() if is_multimodal else UnstructuredParser(
-            strategy="fast",
-            extract_images_in_pdf=False,
-            infer_table_structure=False,
-            extract_image_block_types=[],
-        )
+        file_handlers[mime_type] = UnstructuredParser(**up_options)
 
     file_handlers.update({
         "application/msword": word_parser,
@@ -207,10 +212,10 @@ async def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
     })
 
     if is_multimodal:
-        file_handlers["application/pdf"] = UnstructuredParser()
+        file_handlers["application/pdf"] = UnstructuredParser(**up_options)
         for mime_type, ft in supported.items():
             if _filetype_is_image(ft):
-                file_handlers[mime_type] = UnstructuredParser()
+                file_handlers[mime_type] = UnstructuredParser(**up_options)
 
     device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
     file_handlers.update({

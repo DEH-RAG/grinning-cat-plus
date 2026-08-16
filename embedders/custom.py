@@ -9,6 +9,8 @@ from langchain_community.embeddings import FastEmbedEmbeddings
 from cat import Embeddings, MultimodalEmbeddings
 from cat.utils import retrieve_image
 
+from cat import log
+
 _EMBEDDERS_MODELS_CACHE = {}
 
 
@@ -292,10 +294,11 @@ class CustomJinaMultimodalEmbedder(MultimodalEmbeddings):
                 return base64.b64encode(image).decode("utf-8")
             image = retrieve_image(image)
             # remove "data:image/...;base64," prefix if present
-            if image is not None and image.startswith("data:image"):
-                image = image.split(",", 1)[1]
+            #if image is not None and image.startswith("data:image"):
+            #    image = image.split(",", 1)[1]
             return image
 
+        ''' vllm Jina embedding wants two separate lists of text or images
         payload = (
             [{"text": t} for t in texts] if texts else []
         ) + (
@@ -305,9 +308,22 @@ class CustomJinaMultimodalEmbedder(MultimodalEmbeddings):
         if not payload:
             return []
 
+        json={"model": self.model, "input": payload, "task": self.task},
+        log.debug(f"EMBEDDING: {json}")
+        '''
+        json={"model": self.model, "task": self.task}
+        if texts:
+            json['input'] = texts
+            log.debug(f"EMBED-JINA:texts {texts}" )
+        if images:
+            json['images'] = [parse_image(i) for i in images if i]
+            _images = [ i[:20] for i in json['images'] ]
+            log.debug(f"EMBED-JINA:images {_images}" )
+
         ret = httpx.post(
             self.url,
-            json={"model": self.model, "input": payload, "task": self.task},
+            #json={"model": self.model, "input": payload, "task": self.task},
+            json=json,
             headers=self.headers,
             timeout=300.0,
         )
