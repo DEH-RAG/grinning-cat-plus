@@ -406,13 +406,14 @@ class JinaCLIPEmbeddings(MultimodalEmbeddings):
 class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
     """Multimodal embeddings via vLLM's OpenAI-compatible /v1/embeddings endpoint.
 
-    vLLM requires the chat-style request format for VLM embedding models: ``input``
-    is a list of chat messages whose ``content`` is a list of typed parts, e.g.
-    ``{"type": "text", "text": "..."}`` and
-    ``{"type": "image_url", "image_url": {"url": "data:...;base64,<...>"}}``.
-    The message ``role`` must be ``user`` (vLLM rejects other roles for
-    embedding). Pass ``role`` in ``task`` to override this if a given server
-    accepts a different role.
+    Uses the standard OpenAI string-list ``input`` form: each entry is either a
+    plain text string or an image ``data:<mime>;base64,<...>`` URI. vLLM returns
+    one embedding per input entry (aligned by ``index``), which is required by
+    the chunkers/semantic chunker that call ``embed_documents`` on many chunks.
+
+    NOTE: the chat-message form (``input: [{role, content:[{type:...}]}]``)
+    aggregates the whole request into a SINGLE pooled vector, so it is NOT used
+    here — it would break batch embedding.
     """
 
     # magic-byte prefixes -> mime type, used to build data URIs for bytes input
@@ -429,15 +430,14 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         base_url: str,
         model: str,
         api_key: str | None = None,
-        task: str = "user",
+        task: str | None = None,
         timeout: float = 300.0,
     ):
         self.url = base_url.rstrip("/") + "/v1/embeddings"
         self.model = model
         self.api_key = api_key
         self.headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        # vLLM *requires* a 'user' message for /v1/embeddings; allow override
-        self.role = task if task else "user"
+        self.task = task
         self.timeout = timeout
 
     @staticmethod
@@ -465,27 +465,18 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
 
     def _embed(
         self,
-        texts: List[str] | None = None,
-        images: List[str | bytes] | None = None,
-        role: str = "user",
+        items: List[Dict[str, Any]],
     ) -> List[List[float]]:
-        content = []
-        if texts:
-            content += [{"type": "text", "text": t} for t in texts]
-        if images:
-            for img in images:
-                if not img:
-                    continue
-                content.append(
-                    {"type": "image_url", "image_url": {"url": self._to_data_uri(img)}}
-                )
-        if not content:
+        if not items:
             return []
 
-        payload = {
-            "model": self.model,
-            "input": [{"role": role, "content": content}],
-        }
+        payload = {"model": self.model, "input": []}
+        for it in items:
+            if "text" in it:
+                payload["input"].append(it["text"])
+            elif "image" in it:
+                payload["input"].append(self._to_data_uri(it["image"]))
+
         ret = httpx.post(
             self.url,
             json=payload,
@@ -496,16 +487,17 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         data = ret.json().get("data")
         if not data:
             raise RuntimeError(f"vLLM embedding returned no data: {ret.text[:200]}")
-        return [entry["embedding"] for entry in data]
+        # vLLM returns one entry per input, ordered by index
+        return [entry["embedding"] for entry in sorted(data, key=lambda e: e.get("index", 0))]
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        return self._embed(texts=texts, role=self.role)
+        return self._embed([{"text": t} for t in texts])
 
     def embed_query(self, text: str) -> List[float]:
-        return self._embed(texts=[text], role=self.role)[0]
+        return self._embed([{"text": text}])[0]
 
     def embed_image(self, image: str | bytes) -> List[float]:
-        return self._embed(images=[image], role=self.role)[0]
+        return self._embed([{"image": image}])[0]
 
     def embed_images(self, images: List[str | bytes]) -> List[List[float]]:
-        return self._embed(images=images, role=self.role)
+        return self._embed([{"image": img} for img in images])
