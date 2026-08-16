@@ -473,7 +473,10 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         payload = {"model": self.model, "input": []}
         for it in items:
             if "text" in it:
-                payload["input"].append(it["text"])
+                text = it["text"] if it["text"] is not None else ""
+                # vLLM rejects empty prompts ("The decoder prompt cannot be empty");
+                # keep alignment by substituting a placeholder instead of dropping it
+                payload["input"].append(text if text.strip() else " ")
             elif "image" in it:
                 payload["input"].append(self._to_data_uri(it["image"]))
 
