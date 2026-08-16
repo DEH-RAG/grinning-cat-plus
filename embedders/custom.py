@@ -294,11 +294,10 @@ class CustomJinaMultimodalEmbedder(MultimodalEmbeddings):
                 return base64.b64encode(image).decode("utf-8")
             image = retrieve_image(image)
             # remove "data:image/...;base64," prefix if present
-            #if image is not None and image.startswith("data:image"):
-            #    image = image.split(",", 1)[1]
+            if image is not None and image.startswith("data:image"):
+                image = image.split(",", 1)[1]
             return image
 
-        ''' vllm Jina embedding wants two separate lists of text or images
         payload = (
             [{"text": t} for t in texts] if texts else []
         ) + (
@@ -308,22 +307,9 @@ class CustomJinaMultimodalEmbedder(MultimodalEmbeddings):
         if not payload:
             return []
 
-        json={"model": self.model, "input": payload, "task": self.task},
-        log.debug(f"EMBEDDING: {json}")
-        '''
-        json={"model": self.model, "task": self.task}
-        if texts:
-            json['input'] = texts
-            log.debug(f"EMBED-JINA:texts {texts}" )
-        if images:
-            json['images'] = [parse_image(i) for i in images if i]
-            _images = [ i[:20] for i in json['images'] ]
-            log.debug(f"EMBED-JINA:images {_images}" )
-
         ret = httpx.post(
             self.url,
-            #json={"model": self.model, "input": payload, "task": self.task},
-            json=json,
+            json={"model": self.model, "input": payload, "task": self.task},
             headers=self.headers,
             timeout=300.0,
         )
@@ -415,3 +401,111 @@ class JinaCLIPEmbeddings(MultimodalEmbeddings):
         """Embed multiple images"""
         inputs = [{"image": img} for img in images]
         return self._get_embeddings(inputs)
+
+
+class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
+    """Multimodal embeddings via vLLM's OpenAI-compatible /v1/embeddings endpoint.
+
+    vLLM requires the chat-style request format for VLM embedding models: ``input``
+    is a list of chat messages whose ``content`` is a list of typed parts, e.g.
+    ``{"type": "text", "text": "..."}`` and
+    ``{"type": "image_url", "image_url": {"url": "data:...;base64,<...>"}}``.
+    The message ``role`` must be ``user`` (vLLM rejects other roles for
+    embedding). Pass ``role`` in ``task`` to override this if a given server
+    accepts a different role.
+    """
+
+    # magic-byte prefixes -> mime type, used to build data URIs for bytes input
+    _MAGIC_TO_MIME = (
+        (b"\x89PNG", "image/png"),
+        (b"\xff\xd8", "image/jpeg"),
+        (b"GIF8", "image/gif"),
+        (b"RIFF", "image/webp"),
+        (b"BM", "image/bmp"),
+    )
+
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        api_key: str | None = None,
+        task: str = "user",
+        timeout: float = 300.0,
+    ):
+        self.url = base_url.rstrip("/") + "/v1/embeddings"
+        self.model = model
+        self.api_key = api_key
+        self.headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        # vLLM *requires* a 'user' message for /v1/embeddings; allow override
+        self.role = task if task else "user"
+        self.timeout = timeout
+
+    @staticmethod
+    def _sniff_mime(data: bytes) -> str:
+        for magic, mime in CustomVllmMultimodalEmbedder._MAGIC_TO_MIME:
+            if data.startswith(magic):
+                return mime
+        return "image/png"
+
+    def _to_data_uri(self, image: str | bytes) -> str:
+        """Return a full ``data:<mime>;base64,<...>`` URI for image input."""
+        if isinstance(image, bytes):
+            return f"data:{self._sniff_mime(image)};base64,"\
+                   f"{base64.b64encode(image).decode('utf-8')}"
+        uri = retrieve_image(image)
+        if isinstance(uri, bytes):
+            return self._to_data_uri(uri)
+        if uri is None:
+            raise ValueError(f"Unable to read image: {image!r}")
+        uri = str(uri)
+        if uri.startswith("data:"):
+            return uri
+        # treat as raw base64 (e.g. retrieve_image returned bare base64)
+        return f"data:image/png;base64,{uri}"
+
+    def _embed(
+        self,
+        texts: List[str] | None = None,
+        images: List[str | bytes] | None = None,
+        role: str = "user",
+    ) -> List[List[float]]:
+        content = []
+        if texts:
+            content += [{"type": "text", "text": t} for t in texts]
+        if images:
+            for img in images:
+                if not img:
+                    continue
+                content.append(
+                    {"type": "image_url", "image_url": {"url": self._to_data_uri(img)}}
+                )
+        if not content:
+            return []
+
+        payload = {
+            "model": self.model,
+            "input": [{"role": role, "content": content}],
+        }
+        ret = httpx.post(
+            self.url,
+            json=payload,
+            headers=self.headers,
+            timeout=self.timeout,
+        )
+        ret.raise_for_status()
+        data = ret.json().get("data")
+        if not data:
+            raise RuntimeError(f"vLLM embedding returned no data: {ret.text[:200]}")
+        return [entry["embedding"] for entry in data]
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return self._embed(texts=texts, role=self.role)
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._embed(texts=[text], role=self.role)[0]
+
+    def embed_image(self, image: str | bytes) -> List[float]:
+        return self._embed(images=[image], role=self.role)[0]
+
+    def embed_images(self, images: List[str | bytes]) -> List[List[float]]:
+        return self._embed(images=images, role=self.role)

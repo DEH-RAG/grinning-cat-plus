@@ -20,6 +20,7 @@ from .custom import (
     Qwen3TEIEmbeddings,
     CustomJinaMultimodalEmbedder,
     JinaCLIPEmbeddings,
+    CustomVllmMultimodalEmbedder,
 )
 
 
@@ -334,3 +335,23 @@ class JinaCLIPEmbeddingsConfig(EmbedderMultimodalSettings):
     @classmethod
     def pyclass(cls) -> Type[JinaCLIPEmbeddings]:
         return JinaCLIPEmbeddings
+
+
+class VllmMultimodalConfiguration(EmbedderMultimodalSettings):
+    model: str
+    base_url: str = "http://localhost:8000"
+    api_key: str | None = None
+    task: str = Field(default="user", description="Message role sent to vLLM's /v1/embeddings. Must be 'user' (vLLM rejects other roles for embedding).")
+    timeout: float = 300.0
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "humanReadableName": "vLLM Multimodal Embedder",
+            "description": "Multimodal embeddings via vLLM's OpenAI-compatible /v1/embeddings endpoint. Supports Jina v5 omni (and other VLM) embedding models.",
+            "link": "https://docs.vllm.ai/en/latest/models/pooling_models/embed.html",
+        }
+    )
+
+    @classmethod
+    def pyclass(cls) -> Type[CustomVllmMultimodalEmbedder]:
+        return CustomVllmMultimodalEmbedder

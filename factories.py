@@ -33,6 +33,7 @@ from .embedders.configs import (
     Qwen3TEIEmbeddingsConfig,
     EmbedderJinaMultimodalConfig,
     JinaCLIPEmbeddingsConfig,
+    VllmMultimodalConfiguration,
 )
 from .file_managers.configs import (
     AWSFileManagerConfig,
@@ -95,6 +96,7 @@ def factory_allowed_embedders(allowed: List[EmbedderSettings], lizard) -> List:
         Qwen3TEIEmbeddingsConfig,
         EmbedderJinaMultimodalConfig,
         JinaCLIPEmbeddingsConfig,
+        VllmMultimodalConfiguration,
     ]
 
 
