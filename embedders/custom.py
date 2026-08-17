@@ -520,10 +520,10 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         debug_input = []
         for entry in payload["input"]:
             if isinstance(entry, str) and entry.startswith("data:"):
-                head, _, b64 = entry.partition(",base64,")
+                head, _, b64 = entry.partition(";base64,")
                 if len(b64) > 20:
                     b64 = b64[:20] + f"...({len(b64)} b64 chars)"
-                debug_input.append(f"{head},base64,{b64}")
+                debug_input.append(f"{head};base64,{b64}")
             else:
                 debug_input.append(entry)
         debug_payload = {"model": payload["model"], "input": debug_input}
