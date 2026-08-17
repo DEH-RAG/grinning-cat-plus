@@ -487,9 +487,41 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
                 return mime
         return "image/png"
 
+    def _resize_image_if_needed(self, image: bytes, max_side: int = 700) -> bytes:
+        """Downscale an image so both sides are <= max_side, keeping aspect ratio.
+
+        The Qwen3VL processor served by vLLM rejects images whose dimensions
+        don't fit its patch-grid budget (observed failures start around
+        700x751 / 526k px, with a 1-px discontinuity: 720x722 OK, 721x721 FAIL).
+        Resizing to <=700px per side is verified to always succeed and costs
+        only a few hundred vision tokens, far below the 32768 RoPE limit.
+        Falls back to the original bytes if PIL is unavailable or the decode
+        fails (the server may still accept it).
+        """
+        try:
+            from PIL import Image
+            import io
+
+            img = Image.open(io.BytesIO(image))
+            img.load()
+            w, h = img.size
+            longest = max(w, h)
+            if longest <= max_side:
+                return image
+            ratio = max_side / longest
+            new_size = (max(1, round(w * ratio)), max(1, round(h * ratio)))
+            img = img.resize(new_size, Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+        except Exception as exc:  # noqa: BLE001 - best-effort resize
+            log.debug(f"VLLM_EMBEDDINGS image resize skipped: {exc}")
+            return image
+
     def _to_data_uri(self, image: str | bytes) -> str:
         """Return a full ``data:<mime>;base64,<...>`` URI for image input."""
         if isinstance(image, bytes):
+            image = self._resize_image_if_needed(image)
             return f"data:{self._sniff_mime(image)};base64,"\
                    f"{base64.b64encode(image).decode('utf-8')}"
         uri = retrieve_image(image)
