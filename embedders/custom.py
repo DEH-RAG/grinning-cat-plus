@@ -487,16 +487,26 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
                 return mime
         return "image/png"
 
-    def _resize_image_if_needed(self, image: bytes, max_side: int = 700) -> bytes:
-        """Downscale an image so both sides are <= max_side, keeping aspect ratio.
+    def _image_grid_tokens(self, width: int, height: int) -> int:
+        """Estimate the number of image tokens the Qwen3VL processor will produce.
 
-        The Qwen3VL processor served by vLLM rejects images whose dimensions
-        don't fit its patch-grid budget (observed failures start around
-        700x751 / 526k px, with a 1-px discontinuity: 720x722 OK, 721x721 FAIL).
-        Resizing to <=700px per side is verified to always succeed and costs
-        only a few hundred vision tokens, far below the 32768 RoPE limit.
-        Falls back to the original bytes if PIL is unavailable or the decode
-        fails (the server may still accept it).
+        Replicates the processor's smart_resize: each side is rounded to a
+        multiple of patch_size(16) * merge_size(2) = 32, then divided by 16 to
+        get the grid dims; tokens = grid_h * grid_w.
+        """
+        grid_w = round(width / 32) * 2
+        grid_h = round(height / 32) * 2
+        return grid_w * grid_h
+
+    def _resize_image_if_needed(self, image: bytes, max_image_tokens: int = 2024) -> bytes:
+        """Downscale an image so its processor token budget fits the model.
+
+        The Jina v5 omni *embedding* model rejects images whose processor grid
+        exceeds ~2048 image tokens (observed: <=2024 OK, >=2052 FAIL), regardless
+        of aspect ratio. Preserve aspect ratio and shrink just enough to land
+        under the budget — wide/short or tall/narrow images keep more resolution
+        than forcing a square cap. Falls back to the original bytes if PIL is
+        unavailable or the decode fails.
         """
         try:
             from PIL import Image
@@ -505,12 +515,23 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
             img = Image.open(io.BytesIO(image))
             img.load()
             w, h = img.size
-            longest = max(w, h)
-            if longest <= max_side:
+            if self._image_grid_tokens(w, h) <= max_image_tokens:
                 return image
-            ratio = max_side / longest
-            new_size = (max(1, round(w * ratio)), max(1, round(h * ratio)))
-            img = img.resize(new_size, Image.LANCZOS)
+
+            # binary search the largest scale keeping tokens under the budget
+            lo, hi = 0.0, 1.0
+            for _ in range(30):
+                mid = (lo + hi) / 2
+                nw = max(1, round(w * mid))
+                nh = max(1, round(h * mid))
+                if self._image_grid_tokens(nw, nh) <= max_image_tokens:
+                    lo = mid
+                else:
+                    hi = mid
+
+            nw = max(1, round(w * lo))
+            nh = max(1, round(h * lo))
+            img = img.resize((nw, nh), Image.LANCZOS)
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             return buf.getvalue()
