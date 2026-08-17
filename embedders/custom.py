@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 from typing import Any, Dict, List
 import httpx
@@ -406,14 +407,17 @@ class JinaCLIPEmbeddings(MultimodalEmbeddings):
 class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
     """Multimodal embeddings via vLLM's OpenAI-compatible /v1/embeddings endpoint.
 
-    Uses the standard OpenAI string-list ``input`` form: each entry is either a
-    plain text string or an image ``data:<mime>;base64,<...>`` URI. vLLM returns
-    one embedding per input entry (aligned by ``index``), which is required by
-    the chunkers/semantic chunker that call ``embed_documents`` on many chunks.
+    Uses vLLM's batch-chat request form: ``input`` is a list of conversations,
+    one per item, each a single ``user`` message whose ``content`` is typed
+    parts (``{"type": "text", "text": ...}`` / ``{"type": "image_url",
+    "image_url": {"url": "data:...;base64,<...>"}}``). vLLM returns ONE vector
+    per conversation (aligned by ``index``) and decodes images as real images
+    (vision tokens) — required by the chunkers that call ``embed_documents`` on
+    many chunks and by ``embed_images`` for PDF-extracted images.
 
-    NOTE: the chat-message form (``input: [{role, content:[{type:...}]}]``)
-    aggregates the whole request into a SINGLE pooled vector, so it is NOT used
-    here — it would break batch embedding.
+    NOTE: the plain string-list ``input`` form is NOT usable for images: vLLM
+    tokenizes the whole base64 URI as text, blowing the context window, and the
+    single-conversation chat form pools the whole request into one vector.
     """
 
     # magic-byte prefixes -> mime type, used to build data URIs for bytes input
@@ -506,28 +510,44 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         if not items:
             return []
 
-        payload = {"model": self.model, "input": []}
+        # vLLM batch-chat form: input = one conversation per item; each
+        # conversation is a single message whose content is typed parts
+        # (text / image_url). This returns ONE vector per conversation and
+        # decodes images as real images (vision tokens), not as base64 text.
+        conversations = []
         for it in items:
+            content = []
             if "text" in it:
                 text = it["text"] if it["text"] is not None else ""
-                # vLLM rejects empty prompts ("The decoder prompt cannot be empty");
-                # keep alignment by substituting a placeholder instead of dropping it
-                payload["input"].append(text if text.strip() else " ")
+                # vLLM rejects empty prompts; placeholder keeps alignment
+                text = text if text.strip() else " "
+                content.append({"type": "text", "text": text})
             elif "image" in it:
-                payload["input"].append(self._to_data_uri(it["image"]))
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": self._to_data_uri(it["image"])},
+                })
+            conversations.append({"role": "user", "content": content})
 
-        # Debug: log the exact request dict, shortening image data URIs to ~20 bytes
+        payload = {"model": self.model, "input": [[c] for c in conversations]}
+
+        # Debug: log the exact request dict, shortening image data URIs to ~20 chars
         debug_input = []
-        for entry in payload["input"]:
-            if isinstance(entry, str) and entry.startswith("data:"):
-                head, _, b64 = entry.partition(";base64,")
-                if len(b64) > 20:
-                    b64 = b64[:20] + f"...({len(b64)} b64 chars)"
-                debug_input.append(f"{head};base64,{b64}")
-            else:
-                debug_input.append(entry)
-        debug_payload = {"model": payload["model"], "input": debug_input}
-        log.debug(f"VLLM_EMBEDDINGS request to {self.url}: {debug_payload}")
+        for conv in conversations:
+            debug_content = []
+            for part in conv["content"]:
+                if part["type"] == "image_url":
+                    url = part["image_url"]["url"]
+                    head, _, b64 = url.partition(";base64,")
+                    if len(b64) > 20:
+                        b64 = b64[:20] + f"...({len(b64)} b64 chars)"
+                    debug_content.append({"type": "image_url",
+                                          "image_url": {"url": f"{head};base64,{b64}"}})
+                else:
+                    debug_content.append(part)
+            debug_input.append([{"role": "user", "content": debug_content}])
+        log.debug(f"VLLM_EMBEDDINGS request to {self.url}: "
+                  f"{json.dumps({'model': payload['model'], 'input': debug_input}, default=str)}")
 
         ret = httpx.post(
             self.url,
@@ -542,7 +562,7 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         data = ret.json().get("data")
         if not data:
             raise RuntimeError(f"vLLM embedding returned no data: {ret.text[:200]}")
-        # vLLM returns one entry per input, ordered by index
+        # vLLM returns one entry per conversation, ordered by index
         return [entry["embedding"] for entry in sorted(data, key=lambda e: e.get("index", 0))]
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
