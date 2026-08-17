@@ -480,13 +480,29 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
             elif "image" in it:
                 payload["input"].append(self._to_data_uri(it["image"]))
 
+        # Debug: log the exact request dict, shortening image data URIs to ~20 bytes
+        debug_input = []
+        for entry in payload["input"]:
+            if isinstance(entry, str) and entry.startswith("data:"):
+                head, _, b64 = entry.partition(",base64,")
+                if len(b64) > 20:
+                    b64 = b64[:20] + f"...({len(b64)} b64 chars)"
+                debug_input.append(f"{head},base64,{b64}")
+            else:
+                debug_input.append(entry)
+        debug_payload = {"model": payload["model"], "input": debug_input}
+        log.debug(f"VLLM_EMBEDDINGS request to {self.url}: {debug_payload}")
+
         ret = httpx.post(
             self.url,
             json=payload,
             headers=self.headers,
             timeout=self.timeout,
         )
-        ret.raise_for_status()
+        if ret.status_code != 200:
+            raise RuntimeError(
+                f"vLLM embedding failed with status {ret.status_code}: {ret.text[:500]}"
+            )
         data = ret.json().get("data")
         if not data:
             raise RuntimeError(f"vLLM embedding returned no data: {ret.text[:200]}")
