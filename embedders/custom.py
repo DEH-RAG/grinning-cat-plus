@@ -439,6 +439,42 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         self.headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         self.task = task
         self.timeout = timeout
+        # conservative budget: leave headroom below the model's 32768-token context
+        self._max_input_tokens = 30000
+
+    @staticmethod
+    def _estimate_text_tokens(text: str) -> int:
+        """Rough token estimate: ~3 chars per token (conservative)."""
+        return max(1, len(text) // 3)
+
+    def _split_batches(self, items: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+        """Split items into request batches that stay within the context window.
+
+        Images go one per request because their token cost scales with pixels and
+        cannot be estimated cheaply; texts are grouped up to the token budget.
+        """
+        batches: List[List[Dict[str, Any]]] = []
+        current: List[Dict[str, Any]] = []
+        current_tokens = 0
+
+        for it in items:
+            if "image" in it:
+                if current:
+                    batches.append(current)
+                    current, current_tokens = [], 0
+                batches.append([it])
+                continue
+
+            tokens = self._estimate_text_tokens(it.get("text", ""))
+            if current and current_tokens + tokens > self._max_input_tokens:
+                batches.append(current)
+                current, current_tokens = [], 0
+            current.append(it)
+            current_tokens += tokens
+
+        if current:
+            batches.append(current)
+        return batches
 
     @staticmethod
     def _sniff_mime(data: bytes) -> str:
@@ -510,7 +546,10 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         return [entry["embedding"] for entry in sorted(data, key=lambda e: e.get("index", 0))]
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        return self._embed([{"text": t} for t in texts])
+        results = []
+        for batch in self._split_batches([{"text": t} for t in texts]):
+            results.extend(self._embed(batch))
+        return results
 
     def embed_query(self, text: str) -> List[float]:
         return self._embed([{"text": text}])[0]
@@ -519,4 +558,7 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         return self._embed([{"image": image}])[0]
 
     def embed_images(self, images: List[str | bytes]) -> List[List[float]]:
-        return self._embed([{"image": img} for img in images])
+        results = []
+        for batch in self._split_batches([{"image": img} for img in images]):
+            results.extend(self._embed(batch))
+        return results
