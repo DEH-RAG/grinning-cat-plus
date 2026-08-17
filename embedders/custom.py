@@ -436,6 +436,7 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         api_key: str | None = None,
         task: str | None = None,
         timeout: float = 300.0,
+        max_image_tokens: int = 2048,
     ):
         self.url = base_url.rstrip("/") + "/v1/embeddings"
         self.model = model
@@ -443,6 +444,9 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         self.headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         self.task = task
         self.timeout = timeout
+        # Max image tokens the embedding model accepts (Jina v5 omni: ~2048).
+        # Other multimodal models may accept more; used by the downscaler.
+        self.max_image_tokens = max_image_tokens
         # conservative budget: leave headroom below the model's 32768-token context
         self._max_input_tokens = 30000
 
@@ -498,15 +502,15 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         grid_h = round(height / 32) * 2
         return grid_w * grid_h
 
-    def _resize_image_if_needed(self, image: bytes, max_image_tokens: int = 2024) -> bytes:
+    def _resize_image_if_needed(self, image: bytes) -> bytes:
         """Downscale an image so its processor token budget fits the model.
 
         The Jina v5 omni *embedding* model rejects images whose processor grid
         exceeds ~2048 image tokens (observed: <=2024 OK, >=2052 FAIL), regardless
         of aspect ratio. Preserve aspect ratio and shrink just enough to land
-        under the budget — wide/short or tall/narrow images keep more resolution
-        than forcing a square cap. Falls back to the original bytes if PIL is
-        unavailable or the decode fails.
+        under ``self.max_image_tokens`` — wide/short or tall/narrow images keep
+        more resolution than forcing a square cap. Falls back to the original
+        bytes if PIL is unavailable or the decode fails.
         """
         try:
             from PIL import Image
@@ -515,7 +519,7 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
             img = Image.open(io.BytesIO(image))
             img.load()
             w, h = img.size
-            if self._image_grid_tokens(w, h) <= max_image_tokens:
+            if self._image_grid_tokens(w, h) <= self.max_image_tokens:
                 return image
 
             # binary search the largest scale keeping tokens under the budget
@@ -524,7 +528,7 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
                 mid = (lo + hi) / 2
                 nw = max(1, round(w * mid))
                 nh = max(1, round(h * mid))
-                if self._image_grid_tokens(nw, nh) <= max_image_tokens:
+                if self._image_grid_tokens(nw, nh) <= self.max_image_tokens:
                     lo = mid
                 else:
                     hi = mid

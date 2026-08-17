@@ -342,6 +342,11 @@ class VllmMultimodalConfiguration(EmbedderMultimodalSettings):
     base_url: str = "http://localhost:8000"
     api_key: str | None = None
     timeout: float = 300.0
+    max_image_tokens: int = Field(
+        default=2048,
+        ge=64,
+        description="Max image tokens the embedding model accepts before images are downscaled. Jina v5 omni rejects grids over ~2048; other multimodal models may allow more.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
