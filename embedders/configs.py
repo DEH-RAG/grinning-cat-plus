@@ -347,6 +347,14 @@ class VllmMultimodalConfiguration(EmbedderMultimodalSettings):
         ge=64,
         description="Max image tokens the embedding model accepts before images are downscaled. Jina v5 omni rejects grids over ~2048; other multimodal models may allow more.",
     )
+    query_prefix: str = Field(
+        default="Query: ",
+        description="Prefix prepended to query-side text/image inputs (Jina v5 default 'Query: '). Set to '' to disable.",
+    )
+    document_prefix: str = Field(
+        default="Document: ",
+        description="Prefix prepended to document-side text/image inputs (Jina v5 default 'Document: '; some setups use 'Passage: '). Set to '' to disable.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={

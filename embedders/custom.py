@@ -437,6 +437,8 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         task: str | None = None,
         timeout: float = 300.0,
         max_image_tokens: int = 2048,
+        query_prefix: str = "Query: ",
+        document_prefix: str = "Document: ",
     ):
         self.url = base_url.rstrip("/") + "/v1/embeddings"
         self.model = model
@@ -447,6 +449,12 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         # Max image tokens the embedding model accepts (Jina v5 omni: ~2048).
         # Other multimodal models may accept more; used by the downscaler.
         self.max_image_tokens = max_image_tokens
+        # Retrieval-side prefixes (Jina v5 defaults). Queries vs documents are
+        # embedded differently by retrieval models; prepending the matching side
+        # prefix aligns with encode_query()/encode_document(). Overridable for
+        # other models (e.g. "Passage: " for document side).
+        self.query_prefix = query_prefix
+        self.document_prefix = document_prefix
         # conservative budget: leave headroom below the model's 32768-token context
         self._max_input_tokens = 30000
 
@@ -563,6 +571,7 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
     def _embed(
         self,
         items: List[Dict[str, Any]],
+        prefix: str = "",
     ) -> List[List[float]]:
         if not items:
             return []
@@ -578,8 +587,15 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
                 text = it["text"] if it["text"] is not None else ""
                 # vLLM rejects empty prompts; placeholder keeps alignment
                 text = text if text.strip() else " "
+                if prefix and text.strip():
+                    text = prefix + text
                 content.append({"type": "text", "text": text})
             elif "image" in it:
+                # The retrieval prefix (Query:/Document:) applies to media too:
+                # prepend it as a text part right before the image (the chat
+                # template renders it next to the media placeholder).
+                if prefix:
+                    content.append({"type": "text", "text": prefix})
                 content.append({
                     "type": "image_url",
                     "image_url": {"url": self._to_data_uri(it["image"])},
@@ -625,17 +641,17 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         results = []
         for batch in self._split_batches([{"text": t} for t in texts]):
-            results.extend(self._embed(batch))
+            results.extend(self._embed(batch, prefix=self.document_prefix))
         return results
 
     def embed_query(self, text: str) -> List[float]:
-        return self._embed([{"text": text}])[0]
+        return self._embed([{"text": text}], prefix=self.query_prefix)[0]
 
     def embed_image(self, image: str | bytes) -> List[float]:
-        return self._embed([{"image": image}])[0]
+        return self._embed([{"image": image}], prefix=self.document_prefix)[0]
 
     def embed_images(self, images: List[str | bytes]) -> List[List[float]]:
         results = []
         for batch in self._split_batches([{"image": img} for img in images]):
-            results.extend(self._embed(batch))
+            results.extend(self._embed(batch, prefix=self.document_prefix))
         return results
