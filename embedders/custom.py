@@ -568,6 +568,14 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         # treat as raw base64 (e.g. retrieve_image returned bare base64)
         return f"data:image/png;base64,{uri}"
 
+    @staticmethod
+    def _prefixed(text: str, prefix: str) -> str:
+        """Join a prefix and the text ensuring they are space-separated."""
+        text = text.strip()
+        if not prefix or not text:
+            return text
+        return prefix.rstrip() + " " + text if text else prefix
+
     def _embed(
         self,
         items: List[Dict[str, Any]],
@@ -587,15 +595,13 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
                 text = it["text"] if it["text"] is not None else ""
                 # vLLM rejects empty prompts; placeholder keeps alignment
                 text = text if text.strip() else " "
-                if prefix and text.strip():
-                    text = prefix + text
-                content.append({"type": "text", "text": text})
+                content.append({"type": "text", "text": self._prefixed(text, prefix)})
             elif "image" in it:
                 # The retrieval prefix (Query:/Document:) applies to media too:
                 # prepend it as a text part right before the image (the chat
                 # template renders it next to the media placeholder).
                 if prefix:
-                    content.append({"type": "text", "text": prefix})
+                    content.append({"type": "text", "text": prefix.rstrip()})
                 content.append({
                     "type": "image_url",
                     "image_url": {"url": self._to_data_uri(it["image"])},
