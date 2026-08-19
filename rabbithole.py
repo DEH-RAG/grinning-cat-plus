@@ -18,8 +18,8 @@ from .chunkers.custom import HTMLSemanticChunker
 
 import ctranslate2
 
-nltk.download("punkt")
-nltk.download("averaged_perceptron_tagger")
+nltk.download("punkt", quiet=True)
+nltk.download("averaged_perceptron_tagger", quiet=True)
 
 _AUDIO_MIME_TYPES: Set[str] = {
     "audio/flac", "audio/x-flac",
