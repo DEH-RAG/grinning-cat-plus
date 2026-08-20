@@ -355,11 +355,22 @@ class VllmMultimodalConfiguration(EmbedderMultimodalSettings):
         default="Document: ",
         description="Prefix prepended to document-side text/image inputs (Jina v5 default 'Document: '; some setups use 'Passage: '). Set to '' to disable.",
     )
+    max_input_tokens: int | None = Field(
+        default=None,
+        ge=256,
+        description="Hard token budget per request. Default (None) auto-detects the model's max_model_len from the vLLM /v1/models endpoint and applies context_margin. Set explicitly to override auto-detection (e.g. a smaller window if the server limits it).",
+    )
+    context_margin: float = Field(
+        default=0.9,
+        gt=0.0,
+        le=1.0,
+        description="Fraction of the model's max_model_len used as the per-request token budget when auto-detecting. Headroom absorbs tokenizer overestimation and the input=[[conv]] structure overhead.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
             "humanReadableName": "vLLM Multimodal Embedder",
-            "description": "Multimodal embeddings via vLLM's OpenAI-compatible /v1/embeddings endpoint. Sends text chunks and image data URIs as the standard string-list input; returns one vector per input. Supports Jina v5 omni (and other VLM) embedding models.",
+            "description": "Multimodal embeddings via vLLM's OpenAI-compatible /v1/embeddings endpoint. Sends text chunks and image data URIs as the batch-chat form; returns one vector per input. Auto-detects the model's max_model_len (context length) from /v1/models to keep requests within the running window. Supports Jina v5 omni (and other VLM) embedding models.",
             "link": "https://docs.vllm.ai/en/latest/models/pooling_models/embed.html",
         }
     )

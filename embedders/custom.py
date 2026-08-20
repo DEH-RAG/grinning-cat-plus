@@ -439,8 +439,11 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         max_image_tokens: int = 2048,
         query_prefix: str = "Query: ",
         document_prefix: str = "Document: ",
+        max_input_tokens: int | None = None,
+        context_margin: float = 0.9,
     ):
-        self.url = base_url.rstrip("/") + "/v1/embeddings"
+        self.base_url = base_url.rstrip("/")
+        self.url = self.base_url + "/v1/embeddings"
         self.model = model
         self.api_key = api_key
         self.headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
@@ -456,7 +459,59 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         self.query_prefix = query_prefix
         self.document_prefix = document_prefix
         # conservative budget: leave headroom below the model's 32768-token context
-        self._max_input_tokens = 30000
+        self._max_input_tokens = self._resolve_max_input_tokens(
+            override=max_input_tokens,
+            margin=context_margin,
+        )
+
+    def _fetch_max_model_len(self) -> int | None:
+        """Read the loaded model's context length from vLLM's /v1/models.
+
+        Returns ``max_model_len`` (post auto-fit) for ``self.model``, or the
+        first entry as a fallback; ``None`` if the endpoint is unreachable or
+        the value is missing. vLLM exposes the effective window here (not raw
+        HF keys), which is exactly the cap it enforces on /v1/embeddings.
+        """
+        try:
+            resp = httpx.get(
+                self.base_url + "/v1/models",
+                headers=self.headers,
+                timeout=self.timeout,
+            )
+            if resp.status_code != 200:
+                log.warning(
+                    f"VLLM_EMBEDDINGS /v1/models status {resp.status_code}; "
+                    f"using fallback token budget"
+                )
+                return None
+            data = resp.json().get("data") or []
+            for entry in data:
+                if entry.get("id") == self.model:
+                    return entry.get("max_model_len")
+            if data:
+                # unknown model id: assume the first served one rather than failing
+                return data[0].get("max_model_len")
+        except Exception as exc:  # noqa: BLE001 - network hiccup, fall back to override
+            log.warning(f"VLLM_EMBEDDINGS failed to query /v1/models: {exc}")
+        return None
+
+    def _resolve_max_input_tokens(
+        self,
+        override: int | None,
+        margin: float,
+    ) -> int:
+        """Token budget per request: explicit override wins, else auto-detected.
+
+        Auto-detection reads the model's real ``max_model_len`` from vLLM's
+        /v1/models and applies ``margin`` as headroom below it. If detection
+        fails, falls back to a conservative 30000 (matching a 32768 window).
+        """
+        if override is not None:
+            return max(1, override)
+        max_model_len = self._fetch_max_model_len()
+        if max_model_len is None:
+            return 30000
+        return max(1, int(max_model_len * margin))
 
     @staticmethod
     def _estimate_text_tokens(text: str) -> int:
