@@ -53,6 +53,46 @@ class BaseSemanticChunker(ABC):
         # fallback: conservative ~3 chars/token, never an undercount
         return max(1, len(text) // 3)
 
+    def _fit_to_embed_budget(self, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Pre-split any chunk whose text is too large for the embedder.
+
+        The clustering step embeds every chunk; if one chunk alone exceeds the
+        embedder's input window the request fails. We therefore split oversized
+        chunks into budget-sized sub-chunks HERE, before any embedding, so the
+        full text is always chunked before it is ever sent to the embedder.
+        Sub-chunks inherit the metadata; the downstream merge step re-joins them
+        (and applies ``_token_budget``) so the final output size is unaffected.
+        """
+        budget = self._token_budget()
+        if budget <= 0:
+            return chunks
+
+        fitted: List[Dict[str, Any]] = []
+        for chunk in chunks:
+            text = chunk.get("text", "")
+            if not text or self._count_tokens(text) <= budget:
+                fitted.append(chunk)
+                continue
+
+            # chars allowance from the token budget (2 chars/token consistent
+            # with _count_tokens fallback and the vLLM estimator)
+            max_chars = max(1, budget * 2)
+            words = text.split()
+            current: List[str] = []
+            current_chars = 0
+            for word in words:
+                sep = 1 if current else 0
+                if current and current_chars + sep + len(word) > max_chars:
+                    fitted.append({**chunk, "text": " ".join(current)})
+                    current = [word]
+                    current_chars = len(word)
+                else:
+                    current.append(word)
+                    current_chars += sep + len(word)
+            if current:
+                fitted.append({**chunk, "text": " ".join(current)})
+        return fitted
+
     def _calculate_clusters(self, adjusted: np.ndarray, n: int) -> List:
         def find(x: int):
             while parent[x] != x:
@@ -76,6 +116,12 @@ class BaseSemanticChunker(ABC):
     def chunk(self, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not chunks:
             return []
+
+        # Always chunk the full text before any embedding: split oversized
+        # chunks into embed-budget-sized sub-chunks here, so the clustering
+        # embed (which runs on the whole input list) never sees text that
+        # exceeds the embedder's input window.
+        chunks = self._fit_to_embed_budget(chunks)
 
         return self._chunk(chunks)
 
