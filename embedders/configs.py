@@ -28,6 +28,10 @@ class EmbedderOpenAICompatibleConfig(EmbedderSettings):
     api_key: str | None = None
     model: str
     url: str
+    max_input_tokens: int | None = Field(
+        default=None,
+        description="Maximum input tokens accepted by the embedding model. Used to size chunks that never exceed the embedder. None = unknown/unlimited.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -220,6 +224,10 @@ class EmbedderJinaConfig(EmbedderSettings):
     model: str
     api_key: str
     task: str | None = "text-matching"
+    max_input_tokens: int | None = Field(
+        default=None,
+        description="Maximum input tokens accepted by the embedding model. Used to size chunks that never exceed the embedder. None = unknown/unlimited.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -236,6 +244,10 @@ class EmbedderJinaConfig(EmbedderSettings):
 
 class Qwen3LocalEmbeddingsConfig(EmbedderSettings):
     model_name: str
+    max_input_tokens: int | None = Field(
+        default=None,
+        description="Maximum input tokens accepted by the embedding model. Used to size chunks that never exceed the embedder. None = unknown/unlimited.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -253,6 +265,10 @@ class Qwen3LocalEmbeddingsConfig(EmbedderSettings):
 class Qwen3OllamaEmbeddingsConfig(EmbedderSettings):
     model_name: str
     base_url: str
+    max_input_tokens: int | None = Field(
+        default=None,
+        description="Maximum input tokens accepted by the embedding model. Used to size chunks that never exceed the embedder. None = unknown/unlimited.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -270,6 +286,10 @@ class Qwen3OllamaEmbeddingsConfig(EmbedderSettings):
 class Qwen3DeepInfraEmbeddingsConfig(EmbedderSettings):
     model_name: str
     base_url: str
+    max_input_tokens: int | None = Field(
+        default=None,
+        description="Maximum input tokens accepted by the embedding model. Used to size chunks that never exceed the embedder. None = unknown/unlimited.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -286,6 +306,10 @@ class Qwen3DeepInfraEmbeddingsConfig(EmbedderSettings):
 
 class Qwen3TEIEmbeddingsConfig(EmbedderSettings):
     base_url: str
+    max_input_tokens: int | None = Field(
+        default=None,
+        description="Maximum input tokens accepted by the embedding model. Used to size chunks that never exceed the embedder. None = unknown/unlimited.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -305,6 +329,10 @@ class EmbedderJinaMultimodalConfig(EmbedderMultimodalSettings):
     model: str
     api_key: str
     task: str | None = "text-matching"
+    max_input_tokens: int | None = Field(
+        default=None,
+        description="Maximum input tokens accepted by the embedding model. Used to size chunks that never exceed the embedder. None = unknown/unlimited.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -323,6 +351,10 @@ class JinaCLIPEmbeddingsConfig(EmbedderMultimodalSettings):
     api_key: str
     model_name: str = "jina-clip-v2"
     base_url: str = "https://api.jina.ai/v1/embeddings"
+    max_input_tokens: int | None = Field(
+        default=None,
+        description="Maximum input tokens accepted by the embedding model. Used to size chunks that never exceed the embedder. None = unknown/unlimited.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={

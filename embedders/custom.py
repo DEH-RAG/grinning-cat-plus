@@ -29,7 +29,9 @@ class CustomFastEmbedEmbeddings(Embeddings):
         max_length: int = 512,
         doc_embed_type: str = "passage",
         cache_dir: str = "cat/data/models/fast_embed",
+        max_input_tokens: int | None = None,
     ):
+        self.max_input_tokens = max_input_tokens or max_length
         self._inner = FastEmbedEmbeddings(
             model_name=model_name,
             max_length=max_length,
@@ -46,10 +48,11 @@ class CustomFastEmbedEmbeddings(Embeddings):
 
 class CustomOpenAIEmbeddings(Embeddings):
     """Use OpenAI-compatible API as embedder (like llama-cpp-python)."""
-    def __init__(self, url: str, model: str, api_key: str | None = None):
+    def __init__(self, url: str, model: str, api_key: str | None = None, max_input_tokens: int | None = None):
         self.url = os.path.join(url, "v1/embeddings")
         self.model = model
         self.api_key = api_key
+        self.max_input_tokens = max_input_tokens
 
     @property
     def headers(self):
@@ -87,9 +90,10 @@ class CustomOpenAIEmbeddings(Embeddings):
 
 class CustomOllamaEmbeddings(Embeddings):
     """Use Ollama to serve embedding models."""
-    def __init__(self, base_url: str, model: str):
+    def __init__(self, base_url: str, model: str, max_input_tokens: int | None = None):
         self.url = os.path.join(base_url, "api/embeddings")
         self.model = model
+        self.max_input_tokens = max_input_tokens
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         # Ollama doesn't support batch processing, so we need to process one by one
@@ -108,12 +112,13 @@ class CustomOllamaEmbeddings(Embeddings):
 
 class CustomJinaEmbedder(Embeddings):
     """Use Jina AI to serve embedding models."""
-    def __init__(self, base_url: str, model: str, api_key: str, task: str = "text-matching"):
+    def __init__(self, base_url: str, model: str, api_key: str, task: str = "text-matching", max_input_tokens: int | None = None):
         self.url = os.path.join(base_url, "v1/embeddings")
         self.model = model
         self.api_key = api_key
         self.headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         self.task = task
+        self.max_input_tokens = max_input_tokens
 
     def _embed(self, texts: List[str]) -> List[List[float]]:
         ret = httpx.post(
@@ -137,8 +142,9 @@ class Qwen3LocalEmbeddings(Embeddings):
     Local Qwen3 embeddings using HuggingFace Sentence Transformers.
     Best for: Full control, no external dependencies, offline usage
     """
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, max_input_tokens: int | None = None):
         self.model_name = model_name
+        self.max_input_tokens = max_input_tokens
 
     def _load_model(self) -> SentenceTransformer:
         """Lazy load the model"""
@@ -168,9 +174,10 @@ class Qwen3OllamaEmbeddings(Embeddings):
     Qwen3 embeddings via Ollama.
     Best for: Easy local deployment, minimal setup
     """
-    def __init__(self, model_name: str, base_url: str):
+    def __init__(self, model_name: str, base_url: str, max_input_tokens: int | None = None):
         self.model_name = model_name
         self.base_url = base_url
+        self.max_input_tokens = max_input_tokens
 
     def _get_embedding(self, text: str) -> List[float]:
         """Get embedding from Ollama API"""
@@ -202,10 +209,11 @@ class Qwen3DeepInfraEmbeddings(Embeddings):
     Qwen3 embeddings via DeepInfra API (OpenAI-compatible).
     Best for: Production deployment, no GPU required, pay-as-you-go
     """
-    def __init__(self, model_name: str, base_url: str, api_key: str):
+    def __init__(self, model_name: str, base_url: str, api_key: str, max_input_tokens: int | None = None):
         self.model_name = model_name
         self.base_url = base_url
         self.api_key = api_key
+        self.max_input_tokens = max_input_tokens
 
     def _get_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Get embeddings from DeepInfra"""
@@ -250,8 +258,9 @@ class Qwen3TEIEmbeddings(Embeddings):
     Qwen3 embeddings via Text Embeddings Inference (self-hosted).
     Best for: High-throughput production, full control, optimized inference
     """
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, max_input_tokens: int | None = None):
         self.base_url = base_url
+        self.max_input_tokens = max_input_tokens
 
     def _get_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Get embeddings from TEI server"""
@@ -278,12 +287,13 @@ class Qwen3TEIEmbeddings(Embeddings):
 
 class CustomJinaMultimodalEmbedder(MultimodalEmbeddings):
     """Use Jina AI to serve embedding multimodal models."""
-    def __init__(self, base_url: str, model: str, api_key: str, task: str = "text-matching"):
+    def __init__(self, base_url: str, model: str, api_key: str, task: str = "text-matching", max_input_tokens: int | None = None):
         self.url = os.path.join(base_url, "v1/embeddings")
         self.model = model
         self.api_key = api_key
         self.headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         self.task = task
+        self.max_input_tokens = max_input_tokens
 
     def _embed(
         self,
@@ -335,10 +345,11 @@ class JinaCLIPEmbeddings(MultimodalEmbeddings):
     Jina CLIP v2 multimodal embeddings.
     Handles both text and images in same vector space.
     """
-    def __init__(self, api_key: str, model_name: str, base_url: str):
+    def __init__(self, api_key: str, model_name: str, base_url: str, max_input_tokens: int | None = None):
         self.api_key = api_key
         self.model_name = model_name
         self.base_url = base_url
+        self.max_input_tokens = max_input_tokens
 
     def _get_embeddings(self, inputs: List[Dict[str, Any]]) -> List[List[float]]:
         """
@@ -458,11 +469,16 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         # other models (e.g. "Passage: " for document side).
         self.query_prefix = query_prefix
         self.document_prefix = document_prefix
-        # conservative budget: leave headroom below the model's 32768-token context
-        self._max_input_tokens = self._resolve_max_input_tokens(
+        # Resolve the per-request token budget from the model's real context
+        # window (or the explicit override). Exposed publicly as max_input_tokens
+        # so the rabbit-hole oversized-split and budget-aware chunkers can size
+        # chunks to this embedder's ceiling instead of sending oversized text.
+        self.max_input_tokens = self._resolve_max_input_tokens(
             override=max_input_tokens,
             margin=context_margin,
         )
+        # internal alias used by the request batching below
+        self._max_input_tokens = self.max_input_tokens
 
     def _fetch_max_model_len(self) -> int | None:
         """Read the loaded model's context length from vLLM's /v1/models.

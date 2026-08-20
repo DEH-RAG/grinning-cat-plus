@@ -31,6 +31,28 @@ class BaseSemanticChunker(ABC):
     def embedder(self, embedder: Embeddings):
         self._embedder = embedder
 
+    def _token_budget(self) -> int:
+        """Chunk token budget: the embedder's max_input_tokens when declared,
+        else the configured max_tokens.
+
+        This makes the chunker aware of the configured embedder's input ceiling
+        so merged chunks never exceed it; the core rabbit-hole also re-checks the
+        final list against embedder.max_input_tokens as an extra guard.
+        """
+        embedder_budget = getattr(self._embedder, "max_input_tokens", None)
+        if embedder_budget and embedder_budget > 0:
+            # leave small headroom for batching/tokenizer overestimation
+            return max(1, int(embedder_budget * 0.9))
+        return self.max_tokens
+
+    def _count_tokens(self, text: str) -> int:
+        """Count tokens for a chunk, preferring the embedder's own estimator so
+        the count matches the model that will embed it."""
+        if self._embedder is not None and hasattr(self._embedder, "_estimate_tokens"):
+            return self._embedder._estimate_tokens(text)
+        # fallback: conservative ~3 chars/token, never an undercount
+        return max(1, len(text) // 3)
+
     def _calculate_clusters(self, adjusted: np.ndarray, n: int) -> List:
         def find(x: int):
             while parent[x] != x:
@@ -89,9 +111,9 @@ class SemanticChunker(BaseSemanticChunker):
 
             for chunk in chunk_list:
                 next_text = (current_text + " " + chunk["text"]).strip()
-                num_tokens = len(next_text.split())
+                num_tokens = self._count_tokens(next_text)
 
-                if current_text and num_tokens > self.max_tokens:
+                if current_text and num_tokens > self._token_budget():
                     merged_chunks.append({
                         "text": current_text,
                         "metadata": current_meta
@@ -230,9 +252,9 @@ class MathAwareSemanticChunker(BaseSemanticChunker):
 
             for _idx, chunk, f_map in group:
                 next_text = (current_text + " " + chunk["text"]).strip()
-                num_tokens = len(next_text.split())
+                num_tokens = self._count_tokens(next_text)
 
-                if current_text and num_tokens > self.max_tokens:
+                if current_text and num_tokens > self._token_budget():
                     _flush()
                     current_text = chunk["text"]
                     current_meta = [chunk]
