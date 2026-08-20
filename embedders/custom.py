@@ -469,14 +469,29 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         # other models (e.g. "Passage: " for document side).
         self.query_prefix = query_prefix
         self.document_prefix = document_prefix
-        # Resolve the per-request token budget from the model's real context
-        # window (or the explicit override). Exposed publicly as max_input_tokens
-        # so the rabbit-hole oversized-split and budget-aware chunkers can size
-        # chunks to this embedder's ceiling instead of sending oversized text.
-        self.max_input_tokens = self._resolve_max_input_tokens(
+        # Token budget semantics:
+        #  - max_input_tokens is None -> the value is UNRESOLVED: it means "ask
+        #    the embedder (vLLM /v1/models) for the model's real max_model_len"
+        #    and derive the safe per-request budget from it.
+        #  - max_input_tokens is an int -> an explicit admin override: the raw
+        #    model window is that value; the same safety factor still applies.
+        # The resolution is lazy (see _ensure_max_input_tokens): if the model
+        # endpoint is not reachable yet at construction, we keep None and retry
+        # on first embed, so a transient startup race never bakes in a wrong
+        # budget. Exposed publicly so the rabbit-hole oversized-split and
+        # budget-aware chunkers can size chunks to this embedder's ceiling.
+        self._context_margin = context_margin
+        self._override_max_input_tokens = max_input_tokens
+        self.max_input_tokens: int | None = self._resolve_initial_max_input_tokens(
             override=max_input_tokens,
             margin=context_margin,
         )
+        if self.max_input_tokens is None:
+            log.warning(
+                "VLLM_EMBEDDINGS max_input_tokens unset and /v1/models not "
+                "reachable at init: will ask the embedder for the model's max "
+                "input size on first embed."
+            )
         # internal alias used by the request batching below
         self._max_input_tokens = self.max_input_tokens
 
@@ -511,35 +526,98 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
             log.warning(f"VLLM_EMBEDDINGS failed to query /v1/models: {exc}")
         return None
 
-    def _resolve_max_input_tokens(
+    def _resolve_initial_max_input_tokens(
         self,
         override: int | None,
         margin: float,
-    ) -> int:
-        """Token budget per request: explicit override wins, else auto-detected.
+    ) -> int | None:
+        """Best-effort resolution of the per-request budget at construction.
 
-        Auto-detection reads the model's real ``max_model_len`` from vLLM's
-        /v1/models and applies ``margin`` as headroom below it. If detection
-        fails, falls back to a conservative 30000 (matching a 32768 window).
+        When ``override`` is None we ASK the embedder (``/v1/models``) for the
+        model's real ``max_model_len`` and derive the safe budget from it. If
+        the endpoint is not reachable yet, return ``None`` (unresolved): the
+        same question is re-asked lazily on first embed via
+        ``_ensure_max_input_tokens``, so a transient startup race never freezes
+        a wrong or invented budget.
+
+        The returned budget embeds a 0.5 safety factor over the char-based
+        estimate: the real tokenizer can count up to ~2x the chars/2 estimate on
+        dense content (Markdown, LaTeX, code), so halving the raw window
+        guarantees real tokens stay well below the model's context limit both
+        for a single chunk sent alone and for an accumulated batch.
         """
         if override is not None:
-            return max(1, override)
+            return max(1, int(override * margin * 0.5))
         max_model_len = self._fetch_max_model_len()
         if max_model_len is None:
-            return 30000
-        return max(1, int(max_model_len * margin))
+            return None
+        budget = max(1, int(max_model_len * margin * 0.5))
+        log.info(
+            f"VLLM_EMBEDDINGS max_input_tokens not set: asked embedder "
+            f"({self.base_url}/v1/models) -> max_model_len={max_model_len}, "
+            f"applying margin={margin} and 0.5 safety -> max_input_tokens={budget}"
+        )
+        return budget
+
+    def _ensure_max_input_tokens(self) -> None:
+        """Ask the embedder for the model's input size if not resolved yet.
+
+        Called before every embed when ``max_input_tokens`` is still ``None``
+        (unresolved). Retries ``/v1/models`` -- this heals the transient
+        startup race where the vLLM server was not ready when the embedder was
+        constructed. If it STILL fails, logs loudly and falls back to a
+        conservative 16384 hard budget (provably safe for any context window
+        >= 32768; avoids inventing a number larger than the real one).
+        """
+        if self.max_input_tokens is not None:
+            return
+        budget = self._resolve_initial_max_input_tokens(
+            override=self._override_max_input_tokens,
+            margin=self._context_margin,
+        )
+        if budget is None:
+            # conservative fallback: never larger than the models we serve
+            budget = int(0.5 * 0.9 * 32768)  # ~14745, safe for any 32k-window model
+            log.warning(
+                f"VLLM_EMBEDDINGS still cannot reach /v1/models; using "
+                f"conservative max_input_tokens={budget}"
+            )
+        self.max_input_tokens = budget
+        self._max_input_tokens = budget
 
     @staticmethod
     def _estimate_text_tokens(text: str) -> int:
-        """Rough token estimate: ~3 chars per token (conservative)."""
-        return max(1, len(text) // 3)
+        """Rough token estimate: ~2 chars per token (conservative).
+
+        Real tokenizers average ~3-5 chars/token for plain English but can drop
+        to ~2 chars/token for dense content (Markdown notation, LaTeX, code).
+        Using 2 chars/token makes the estimate *conservative*: it never
+        undercounts badly, so batches sized on this estimate stay under the
+        model's real context window.
+        """
+        return max(1, len(text) // 2)
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Overrides ``Embeddings._estimate_tokens`` so the core rabbit-hole's
+        oversized-split (which reads ``embedder._estimate_tokens``) uses the
+        SAME conservative, tokenizer-aware estimate as this embedder's batching.
+        This keeps chunking and batching consistent: a chunk that the core
+        splitter considers "within budget" is also safe to embed here.
+        """
+        return self._estimate_text_tokens(text)
 
     def _split_batches(self, items: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
         """Split items into request batches that stay within the context window.
 
         Images go one per request because their token cost scales with pixels and
         cannot be estimated cheaply; texts are grouped up to the token budget.
+
+        ``_max_input_tokens`` already embeds the safety factor against the
+        char-based estimator, so the same ceiling keeps a single chunk safe when
+        sent alone AND keeps the accumulated batch within the model window.
         """
+        batch_budget = self._max_input_tokens
+
         batches: List[List[Dict[str, Any]]] = []
         current: List[Dict[str, Any]] = []
         current_tokens = 0
@@ -553,7 +631,7 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
                 continue
 
             tokens = self._estimate_text_tokens(it.get("text", ""))
-            if current and current_tokens + tokens > self._max_input_tokens:
+            if current and current_tokens + tokens > batch_budget:
                 batches.append(current)
                 current, current_tokens = [], 0
             current.append(it)
@@ -716,12 +794,14 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         return [entry["embedding"] for entry in sorted(data, key=lambda e: e.get("index", 0))]
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        self._ensure_max_input_tokens()
         results = []
         for batch in self._split_batches([{"text": t} for t in texts]):
             results.extend(self._embed(batch, prefix=self.document_prefix))
         return results
 
     def embed_query(self, text: str) -> List[float]:
+        self._ensure_max_input_tokens()
         return self._embed([{"text": text}], prefix=self.query_prefix)[0]
 
     def embed_image(self, image: str | bytes) -> List[float]:
