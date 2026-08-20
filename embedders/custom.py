@@ -797,11 +797,67 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         self._ensure_max_input_tokens()
         results = []
         for batch in self._split_batches([{"text": t} for t in texts]):
+            # A single input can still exceed the per-item budget (e.g. a whole
+            # document passed to a chunker's clustering step before splitting).
+            # The 1:1 vector-per-input contract must hold, so an oversized item
+            # cannot be split into multiple returned vectors: instead embed its
+            # budget-sized sub-parts and average them into ONE vector. This keeps
+            # clustering/retrieval semantics intact while never sending more than
+            # the model window accepts.
+            if len(batch) == 1:
+                item = batch[0]
+                text = item.get("text", "")
+                if text and self._estimate_text_tokens(text) > self._max_input_tokens:
+                    vectors = [
+                        v for v in self._embed_sub_parts(text, prefix=self.document_prefix)
+                    ]
+                    results.append(self._average_vectors(vectors))
+                    continue
             results.extend(self._embed(batch, prefix=self.document_prefix))
         return results
 
+    def _embed_sub_parts(self, text: str, prefix: str) -> List[List[float]]:
+        """Embed ``text`` split into budget-sized sub-parts, one vector each.
+
+        Words are folded into sub-parts of at most ``max_input_tokens`` (chars
+        estimate); each sub-part is embedded (batch-safe) and its vector
+        returned in order. Used only to embed a single oversized input.
+        """
+        part_chars = max(1, self._max_input_tokens * 2)  # chars ≈ 2 * token-budget
+        words = text.split()
+        parts: List[str] = []
+        current: List[str] = []
+        current_chars = 0
+        for word in words:
+            sep = 1 if current else 0
+            if current and current_chars + sep + len(word) > part_chars:
+                parts.append(" ".join(current))
+                current = [word]
+                current_chars = len(word)
+            else:
+                current.append(word)
+                current_chars += sep + len(word)
+        if current:
+            parts.append(" ".join(current))
+
+        vectors: List[List[float]] = []
+        for part in parts:
+            vectors.extend(self._embed([{"text": part}], prefix=prefix))
+        return vectors
+
+    @staticmethod
+    def _average_vectors(vectors: List[List[float]]) -> List[float]:
+        """Element-wise mean of vectors (one embedding for many sub-parts)."""
+        if not vectors:
+            return []
+        n = len(vectors)
+        return [sum(col) / n for col in zip(*vectors)]
+
     def embed_query(self, text: str) -> List[float]:
         self._ensure_max_input_tokens()
+        if self._estimate_text_tokens(text) > self._max_input_tokens:
+            # a single over-limit query: embed sub-parts and average
+            return self._average_vectors(self._embed_sub_parts(text, prefix=self.query_prefix))
         return self._embed([{"text": text}], prefix=self.query_prefix)[0]
 
     def embed_image(self, image: str | bytes) -> List[float]:
