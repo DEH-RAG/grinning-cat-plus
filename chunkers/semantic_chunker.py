@@ -74,23 +74,36 @@ class BaseSemanticChunker(ABC):
                 fitted.append(chunk)
                 continue
 
-            # chars allowance from the token budget (2 chars/token consistent
-            # with _count_tokens fallback and the vLLM estimator)
-            max_chars = max(1, budget * 2)
+            # Exact, linear split: coarse chars/estimate pass, then refine each
+            # overshooting candidate by measuring word-by-word near the boundary
+            # (does NOT re-encode the whole growing candidate at every word).
             words = text.split()
-            current: List[str] = []
-            current_chars = 0
-            for word in words:
-                sep = 1 if current else 0
-                if current and current_chars + sep + len(word) > max_chars:
-                    fitted.append({**chunk, "text": " ".join(current)})
-                    current = [word]
-                    current_chars = len(word)
-                else:
-                    current.append(word)
-                    current_chars += sep + len(word)
-            if current:
-                fitted.append({**chunk, "text": " ".join(current)})
+            # avg tokens per word for THIS text (sampled on 200 words)
+            sample_tokens = max(1, self._count_tokens(" ".join(words[:200])))
+            approx_tpw = sample_tokens / max(1, len(words[:200]))
+            per_chunk_words = max(1, int(budget / approx_tpw))
+
+            for start in range(0, len(words), per_chunk_words):
+                part = words[start:start + per_chunk_words]
+                text_part = " ".join(part)
+                if self._count_tokens(text_part) <= budget:
+                    fitted.append({**chunk, "text": text_part})
+                    continue
+                # refine: shave words until exactly within budget (linear)
+                lo, hi = 0, len(part)
+                while lo < hi:
+                    mid = (lo + hi + 1) // 2
+                    if self._count_tokens(" ".join(part[:mid])) <= budget:
+                        lo = mid
+                    else:
+                        hi = mid - 1
+                if lo == 0:
+                    # single word alone exceeds budget (pathological): emit it
+                    lo = 1
+                fitted.append({**chunk, "text": " ".join(part[:lo])})
+                # push the remainder into the next slice, if any
+                if lo < len(part):
+                    words[start + lo: start + len(part)] = part[lo:]
         return fitted
 
     def _calculate_clusters(self, adjusted: np.ndarray, n: int) -> List:

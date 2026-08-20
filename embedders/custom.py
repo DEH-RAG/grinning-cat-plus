@@ -482,6 +482,8 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         # budget-aware chunkers can size chunks to this embedder's ceiling.
         self._context_margin = context_margin
         self._override_max_input_tokens = max_input_tokens
+        # real tokenizer (lazy): None until _load_tokenizer() runs
+        self._tokenizer = None
         self.max_input_tokens: int | None = self._resolve_initial_max_input_tokens(
             override=max_input_tokens,
             margin=context_margin,
@@ -534,28 +536,26 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         """Best-effort resolution of the per-request budget at construction.
 
         When ``override`` is None we ASK the embedder (``/v1/models``) for the
-        model's real ``max_model_len`` and derive the safe budget from it. If
-        the endpoint is not reachable yet, return ``None`` (unresolved): the
-        same question is re-asked lazily on first embed via
+        model's real ``max_model_len`` and derive the budget from it. If the
+        endpoint is not reachable yet, return ``None`` (unresolved): the same
+        question is re-asked lazily on first embed via
         ``_ensure_max_input_tokens``, so a transient startup race never freezes
         a wrong or invented budget.
 
-        The returned budget embeds a 0.5 safety factor over the char-based
-        estimate: the real tokenizer can count up to ~2x the chars/2 estimate on
-        dense content (Markdown, LaTeX, code), so halving the raw window
-        guarantees real tokens stay well below the model's context limit both
-        for a single chunk sent alone and for an accumulated batch.
+        With exact token counting (the model's real tokenizer, see
+        ``_estimate_tokens``) no conservative fudge factor is needed: the raw
+        window scaled by ``margin`` is a hard, exact ceiling.
         """
         if override is not None:
-            return max(1, int(override * margin * 0.5))
+            return max(1, int(override * margin))
         max_model_len = self._fetch_max_model_len()
         if max_model_len is None:
             return None
-        budget = max(1, int(max_model_len * margin * 0.5))
+        budget = max(1, int(max_model_len * margin))
         log.info(
             f"VLLM_EMBEDDINGS max_input_tokens not set: asked embedder "
             f"({self.base_url}/v1/models) -> max_model_len={max_model_len}, "
-            f"applying margin={margin} and 0.5 safety -> max_input_tokens={budget}"
+            f"applying margin={margin} -> max_input_tokens={budget}"
         )
         return budget
 
@@ -585,24 +585,79 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         self.max_input_tokens = budget
         self._max_input_tokens = budget
 
-    @staticmethod
-    def _estimate_text_tokens(text: str) -> int:
-        """Rough token estimate: ~2 chars per token (conservative).
+    def _load_tokenizer(self):
+        """Lazily obtain the model's REAL tokenizer for exact token counting.
 
-        Real tokenizers average ~3-5 chars/token for plain English but can drop
-        to ~2 chars/token for dense content (Markdown notation, LaTeX, code).
-        Using 2 chars/token makes the estimate *conservative*: it never
-        undercounts badly, so batches sized on this estimate stay under the
-        model's real context window.
+        The model usually lives on a DIFFERENT host (the vLLM server), so we
+        cannot assume a local HF cache. Resolution order:
+
+        1. local HF cache (``AutoTokenizer``) if the model is cached here;
+        2. the vLLM server's own ``/tokenize`` endpoint -- the authoritative
+           tokenizer of the serving host, used at runtime to count each text;
+        3. ``None`` -> callers fall back to a conservative chars/2 estimate.
+
+        The result is memoized; the remote fallback transparently marks that
+        counting must go through the HTTP endpoint (see _estimate_text_tokens).
         """
+        if self._tokenizer is not None:
+            return self._tokenizer
+        try:
+            from transformers import AutoTokenizer
+
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.model, trust_remote_code=True
+            )
+            log.info(f"VLLM_EMBEDDINGS loaded real tokenizer for {self.model} (local cache)")
+            return self._tokenizer
+        except Exception as exc:  # noqa: BLE001 - non-fatal, fall back to remote
+            log.warning(
+                f"VLLM_EMBEDDINGS no local tokenizer for {self.model} "
+                f"(model is remote): will use the vLLM /tokenize endpoint. ({exc})"
+            )
+            self._tokenizer = "remote"  # sentinel: count via the server
+        return self._tokenizer
+
+    def _estimate_text_tokens(self, text: str) -> int:
+        """EXACT token count of ``text`` using the model's real tokenizer.
+
+        Uses the local HF tokenizer when available; otherwise asks the remote
+        vLLM server's ``/tokenize`` endpoint, which returns the exact count
+        (``{"count": N, ...}``) for the model it serves. Falls back to a
+        conservative ~2 chars/token estimate only when both are unavailable.
+        """
+        tok = self._tokenizer
+        if tok is None:
+            tok = self._load_tokenizer()
+
+        if tok is not None and tok != "remote":
+            try:
+                return max(1, len(tok.encode(text)))
+            except Exception:  # noqa: BLE001 - non-fatal, fall back to remote
+                pass
+
+        if tok == "remote" or tok is None:
+            try:
+                r = httpx.post(
+                    self.base_url + "/tokenize",
+                    json={"model": self.model, "prompt": text},
+                    headers=self.headers,
+                    timeout=min(self.timeout, 10),
+                )
+                if r.status_code == 200:
+                    count = r.json().get("count")
+                    if count:
+                        return max(1, int(count))
+            except Exception as exc:  # noqa: BLE001 - non-fatal
+                log.debug(f"VLLM_EMBEDDINGS /tokenize failed: {exc}")
+
         return max(1, len(text) // 2)
 
     def _estimate_tokens(self, text: str) -> int:
-        """Overrides ``Embeddings._estimate_tokens`` so the core rabbit-hole's
-        oversized-split (which reads ``embedder._estimate_tokens``) uses the
-        SAME conservative, tokenizer-aware estimate as this embedder's batching.
-        This keeps chunking and batching consistent: a chunk that the core
-        splitter considers "within budget" is also safe to embed here.
+        """Soldier base override: real-tokenizer counting for core/chunker.
+
+        The core rabbit-hole's oversized-split and the semantic chunker both
+        call ``embedder._estimate_tokens``: giving them the SAME exact count
+        the model uses keeps chunking, batching and splitting consistent.
         """
         return self._estimate_text_tokens(text)
 
