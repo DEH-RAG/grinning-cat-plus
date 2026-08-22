@@ -814,23 +814,28 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
 
         payload = {"model": self.model, "input": [[c] for c in conversations]}
 
-        # Debug: log the exact request dict, shortening image data URIs to ~20 chars
-        debug_input = []
-        for conv in conversations:
-            debug_content = []
-            for part in conv["content"]:
-                if part["type"] == "image_url":
-                    url = part["image_url"]["url"]
-                    head, _, b64 = url.partition(";base64,")
-                    if len(b64) > 20:
-                        b64 = b64[:20] + f"...({len(b64)} b64 chars)"
-                    debug_content.append({"type": "image_url",
-                                          "image_url": {"url": f"{head};base64,{b64}"}})
-                else:
-                    debug_content.append(part)
-            debug_input.append([{"role": "user", "content": debug_content}])
-        log.debug(f"VLLM_EMBEDDINGS request to {self.url}: "
-                  f"{json.dumps({'model': payload['model'], 'input': debug_input}, default=str)}")
+        # Debug-only request log: build it only when DEBUG is enabled (cheap
+        # check on the cat log engine's configured level) and keep each text to
+        # its first 100 chars (images ~20 b64 chars) so the line stays small
+        # even for huge batches.
+        if log.LOG_LEVEL == "DEBUG":
+            debug_input = []
+            for conv in conversations:
+                debug_content = []
+                for part in conv["content"]:
+                    if part["type"] == "image_url":
+                        url = part["image_url"]["url"]
+                        head, _, b64 = url.partition(";base64,")
+                        if len(b64) > 20:
+                            b64 = b64[:20] + f"...({len(b64)} b64 chars)"
+                        debug_content.append({"type": "image_url",
+                                              "image_url": {"url": f"{head};base64,{b64}"}})
+                    else:
+                        text = part.get("text", "")
+                        debug_content.append({**part, "text": text[:100]})
+                debug_input.append([{"role": "user", "content": debug_content}])
+            log.debug(f"VLLM_EMBEDDINGS request to {self.url}: "
+                      f"{json.dumps({'model': payload['model'], 'input': debug_input}, default=str)}")
 
         ret = httpx.post(
             self.url,
