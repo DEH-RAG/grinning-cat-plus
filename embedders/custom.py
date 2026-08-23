@@ -607,8 +607,9 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         conservative 16384 hard budget (provably safe for any context window
         >= 32768; avoids inventing a number larger than the real one).
         """
-        self._persist_auto_budget_to_config()
         if self.max_input_tokens is not None:
+            # already resolved (at init or a previous call): flush now
+            self._persist_auto_budget_to_config()
             return
         budget = self._resolve_initial_max_input_tokens(
             override=self._override_max_input_tokens,
@@ -623,6 +624,7 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
             )
         self.max_input_tokens = budget
         self._max_input_tokens = budget
+        self._persist_auto_budget_to_config()
 
     def _load_tokenizer(self):
         """Lazily obtain the model's REAL tokenizer for exact token counting.
