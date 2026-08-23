@@ -390,7 +390,7 @@ class VllmMultimodalConfiguration(EmbedderMultimodalSettings):
     max_input_tokens: int | None = Field(
         default=None,
         ge=256,
-        description="Hard token budget per request. Default (None) auto-detects the model's max_model_len from the vLLM /v1/models endpoint and applies context_margin. Set explicitly to override auto-detection (e.g. a smaller window if the server limits it).",
+        description="Raw model context window (max_model_len). None (default) auto-detects the value from the vLLM /v1/models endpoint on first use and stores it back here; the per-request budget is then max_input_tokens * context_margin. Set explicitly to override auto-detection (e.g. a smaller window if the server limits it).",
     )
     context_margin: float = Field(
         default=0.9,
