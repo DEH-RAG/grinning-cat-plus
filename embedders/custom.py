@@ -555,6 +555,8 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         max_model_len = self._fetch_max_model_len()
         if max_model_len is None:
             return None
+        self._last_requested_max_model_len = max_model_len
+        self._persist_pending = True
         budget = max(1, int(max_model_len * margin))
         log.info(
             f"VLLM_EMBEDDINGS max_input_tokens not set: asked embedder "
