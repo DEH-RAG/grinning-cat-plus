@@ -480,6 +480,10 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         # on first embed, so a transient startup race never bakes in a wrong
         # budget. Exposed publicly so the rabbit-hole oversized-split and
         # budget-aware chunkers can size chunks to this embedder's ceiling.
+        self.agent_id: str | None = None
+        self._last_requested_max_model_len: int | None = None
+        self._persist_pending = False
+        self._persisted = False
         self._context_margin = context_margin
         self._override_max_input_tokens = max_input_tokens
         # real tokenizer (lazy): None until _load_tokenizer() runs
