@@ -11,6 +11,8 @@ from cat import Embeddings, MultimodalEmbeddings
 from cat.utils import retrieve_image
 
 from cat import log
+from cat.db.database import DEFAULT_SYSTEM_KEY, get_sync_db
+from cat.db.cruds.settings import format_key
 
 _EMBEDDERS_MODELS_CACHE = {}
 
@@ -565,6 +567,36 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         )
         return budget
 
+    def _persist_auto_budget_to_config(self) -> None:
+        """Persist an auto-detected context budget to the system settings.
+
+        One-shot and fire-and-forget: runs at most once per instance, never
+        overwrites an explicit admin override or an already-stored value, and
+        never blocks embedding on a Redis failure.
+        """
+        if self._override_max_input_tokens is not None:
+            return
+        if self._persisted:
+            return
+        raw = self._last_requested_max_model_len
+        if raw is None:
+            return
+        try:
+            key = format_key(DEFAULT_SYSTEM_KEY)  # "system:agent"
+            path = '$[?(@.name=="VllmMultimodalConfiguration")].value.max_input_tokens'
+            db = get_sync_db()
+            current = db.json().get(key, path)
+            if current is not None:
+                self._persisted = True
+                return
+            db.json().set(key, path, raw)
+            self._persisted = True
+        except Exception as exc:  # noqa: BLE001 - never block embedding on Redis
+            log.warning(
+                f"VLLM_EMBEDDINGS failed to persist auto-detected "
+                f"max_input_tokens: {exc}"
+            )
+
     def _ensure_max_input_tokens(self) -> None:
         """Ask the embedder for the model's input size if not resolved yet.
 
@@ -575,6 +607,7 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         conservative 16384 hard budget (provably safe for any context window
         >= 32768; avoids inventing a number larger than the real one).
         """
+        self._persist_auto_budget_to_config()
         if self.max_input_tokens is not None:
             return
         budget = self._resolve_initial_max_input_tokens(
