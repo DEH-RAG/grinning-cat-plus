@@ -584,12 +584,20 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         try:
             key = format_key(DEFAULT_SYSTEM_KEY)  # "system:agent"
             path = '$[?(@.name=="VllmMultimodalConfiguration")].value.max_input_tokens'
+            # sync handle is core-owned (cat.db.database.get_sync_db); the
+            # DB-swap seam for settings lives in the core, so plugins use this
+            # shared handle rather than opening their own connection
             db = get_sync_db()
-            current = db.json().get(key, path)
+            res = db.json().get(key, path)
+            current = res[0] if isinstance(res, list) and res else None
             if current is not None:
                 self._persisted = True
                 return
             db.json().set(key, path, raw)
+            log.debug(
+                f"VLLM_EMBEDDINGS persisted auto-detected "
+                f"max_input_tokens={raw} to {key}"
+            )
             self._persisted = True
         except Exception as exc:  # noqa: BLE001 - never block embedding on Redis
             log.warning(
