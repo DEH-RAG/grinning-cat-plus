@@ -143,6 +143,37 @@ Each provider is configured through its corresponding Pydantic settings class un
 
 In the admin UI, these appear using each class `humanReadableName` and expose the required fields (API keys, endpoints, model names, chunking params, etc.).
 
+## vLLM multimodal embedder (server)
+
+When using the vLLM multimodal embedder with a Qwen3-VL model (e.g. `Qwen/Qwen3-VL-Embedding-2B`), the server must be launched with the correct pooling/embedding flags. Multimodal embedding is supported for `Qwen3VLForConditionalGeneration`.
+
+Correct server launch:
+
+```bash
+vllm serve Qwen/Qwen3-VL-Embedding-2B \
+  --runner pooling \
+  --convert embed \
+  --mm-processor-kwargs '{"min_pixels":4096,"max_pixels":1310720}' \
+  --limit-mm-per-prompt '{"image":8}' \
+  --max-model-len <sufficient>
+```
+
+> **Warning:** `--task embed` is **NOT** a vLLM flag. The correct flag to enable the pooling/embedding runner is `--runner pooling`. `--mm-processor-kwargs` overrides the multimodal processor defaults (Qwen3-VL-Embedding-2B ships with `min_pixels=4096`, `max_pixels=1310720`).
+
+### Client behavior
+
+- The plugin always pairs an image with a text part when building the `/v1/embeddings` request.
+- It applies a Qwen3-VL pixel budget on the client side (`max_pixels` default `1_310_720`).
+- If an image is rejected, the plugin retries once with a halved pixel-budget ceiling; if it still fails, the image is skipped (returns `None`) and ingestion continues.
+
+### Troubleshooting `400 Failed to apply Qwen3VLProcessor`
+
+This error is a vLLM wrapper around the Hugging Face processor call. The real cause is chained as `exc.__cause__` in the server log — always read the server log to find the actual exception. Common causes:
+
+- **Insufficient `--max-model-len`**: the image token cost must fit within the model context. As a reference, a `1040x518` image costs roughly `512` tokens. Raise `--max-model-len` accordingly.
+- **Tokenizer `truncation` / `max_length` mismatch**: the served `tokenizer.json` may carry `truncation`/`max_length` settings that conflict with the processor's image-token accounting, producing a "Mismatch in image token count between text and input_ids". Known upstream issues: `vllm-project/vllm#36653` and `llm-compressor#1725`.
+- **Transformers version incompatibility** on the server: verify the installed `transformers` version is compatible with the model and vLLM build.
+
 ## Compatibility notes
 
 - Some integrations are intentionally commented out due to compatibility concerns (see `requirements.txt` and config files)
