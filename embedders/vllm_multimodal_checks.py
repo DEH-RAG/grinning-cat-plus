@@ -18,7 +18,15 @@ for files shipped under a cat plugin folder (the host import_module()s every
 """
 
 if __name__ == "__main__":
+    import os
+    import sys
     from unittest import mock
+
+    # Running this file directly puts embedders/ on sys.path, not the repo
+    # root, so the top-level `embedders` package is unresolvable. Bootstrap the
+    # repo root so `python3 embedders/vllm_multimodal_checks.py` works from the
+    # repo root. Inside __main__, so importing the module still runs zero code.
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     import embedders.custom as embedder_module
     from embedders.custom import CustomVllmMultimodalEmbedder

@@ -907,7 +907,7 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
                 # The retrieval prefix (Query:/Document:) applies to media too:
                 # prepend it as a text part right before the image (the chat
                 # template renders it next to the media placeholder).
-                if prefix:
+                if prefix and prefix.strip():
                     content.append({"type": "text", "text": prefix.rstrip()})
                 content.append({
                     "type": "image_url",
