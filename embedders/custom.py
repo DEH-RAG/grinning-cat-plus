@@ -859,6 +859,15 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
                     "type": "image_url",
                     "image_url": {"url": self._to_data_uri(it["image"])},
                 })
+                # vLLM builds an mm-only dummy prompt when a message is
+                # image-only, which some processors (e.g. Qwen3-VL) reject
+                # with a 400. Always pair the image with a real non-whitespace
+                # text part so the chat template never emits an image-only
+                # message. When a prefix is present it already serves as that
+                # text part (before the image); otherwise append a placeholder
+                # after the image.
+                if not prefix or not prefix.strip():
+                    content.append({"type": "text", "text": "Document"})
             conversations.append({"role": "user", "content": content})
 
         payload = {"model": self.model, "input": [[c] for c in conversations]}
