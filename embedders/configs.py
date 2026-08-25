@@ -1,4 +1,4 @@
-from typing import Type, Any
+from typing import Type, Any, Literal
 from fastembed import TextEmbedding
 from langchain_cohere import CohereEmbeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -397,6 +397,20 @@ class VllmMultimodalConfiguration(EmbedderMultimodalSettings):
         gt=0.0,
         le=1.0,
         description="Fraction of the model's max_model_len used as the per-request token budget when auto-detecting. Headroom absorbs tokenizer overestimation and the input=[[conv]] structure overhead.",
+    )
+    min_pixels: int | None = Field(
+        default=None,
+        ge=1,
+        description="Minimum image pixels the processor keeps (Qwen3-VL preprocessor min_pixels). None (default) uses 4096. Consulted only when image_budget resolves to the pixel budget.",
+    )
+    max_pixels: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum image pixels the processor accepts before images are downscaled (Qwen3-VL preprocessor max_pixels). None (default) uses 1_310_720, mirroring Qwen/Qwen3-VL-Embedding-2B preprocessor_config.json; Instruct variants may use 1_505_280 — the client budget must stay <= the server budget. Consulted only when image_budget resolves to the pixel budget.",
+    )
+    image_budget: Literal["auto", "pixels", "grid_tokens"] = Field(
+        default="auto",
+        description="Which image budget guards downscaling. 'auto' uses the pixel budget when the model name contains 'qwen' (case-insensitive) and the legacy grid-token guard (max_image_tokens) otherwise; 'pixels' forces the pixel budget; 'grid_tokens' forces the legacy Jina grid-token guard.",
     )
 
     model_config = ConfigDict(

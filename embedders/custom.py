@@ -454,6 +454,9 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         document_prefix: str = "Document: ",
         max_input_tokens: int | None = None,
         context_margin: float = 0.9,
+        min_pixels: int | None = None,
+        max_pixels: int | None = None,
+        image_budget: str = "auto",
     ):
         self.base_url = base_url.rstrip("/")
         self.url = self.base_url + "/v1/embeddings"
@@ -465,6 +468,19 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
         # Max image tokens the embedding model accepts (Jina v5 omni: ~2048).
         # Other multimodal models may accept more; used by the downscaler.
         self.max_image_tokens = max_image_tokens
+        # Qwen3-VL pixel budget (mirrors Qwen/Qwen3-VL-Embedding-2B
+        # preprocessor_config.json). None -> effective defaults applied at
+        # resize time: min_pixels=4096, max_pixels=1_310_720. Instruct variants
+        # may raise the server budget to 1_505_280; the client budget must stay
+        # <= the server budget.
+        self.min_pixels = min_pixels
+        self.max_pixels = max_pixels
+        # Budget discriminator: "auto" = pixel budget when the model name
+        # contains "qwen" (case-insensitive), else the legacy Jina grid-token
+        # guard; "pixels" forces the pixel budget; "grid_tokens" forces the
+        # legacy path. Keeps Jina byte-identical while protecting Qwen3-VL
+        # out-of-the-box.
+        self.image_budget = image_budget
         # Retrieval-side prefixes (Jina v5 defaults). Queries vs documents are
         # embedded differently by retrieval models; prepending the matching side
         # prefix aligns with encode_query()/encode_document(). Overridable for
@@ -752,26 +768,49 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
                 return mime
         return "image/png"
 
-    def _image_grid_tokens(self, width: int, height: int) -> int:
-        """Estimate the number of image tokens the Qwen3VL processor will produce.
+    def _uses_pixel_budget(self) -> bool:
+        """Resolve the image_budget discriminator to a concrete budget kind.
 
-        Replicates the processor's smart_resize: each side is rounded to a
-        multiple of patch_size(16) * merge_size(2) = 32, then divided by 16 to
-        get the grid dims; tokens = grid_h * grid_w.
+        ``auto`` picks the pixel budget when the model name contains "qwen"
+        (case-insensitive) and the legacy grid-token guard otherwise;
+        ``pixels`` and ``grid_tokens`` force their respective budget.
+        """
+        if self.image_budget == "pixels":
+            return True
+        if self.image_budget == "grid_tokens":
+            return False
+        # auto
+        return "qwen" in self.model.lower()
+
+    def _image_grid_tokens(self, width: int, height: int) -> int:
+        """Estimate the number of image tokens the Jina processor will produce.
+
+        Jina-calibrated grid-token estimate: each side is rounded to a multiple
+        of patch_size(16) * merge_size(2) = 32, then divided by 16 to get the
+        grid dims; tokens = grid_h * grid_w. This is the legacy formula used by
+        the Jina grid-token guard (max_image_tokens=2048) and MUST stay
+        byte-identical to preserve Jina v5 behavior. The Qwen pixel-budget path
+        does NOT use this method (it uses an area check).
         """
         grid_w = round(width / 32) * 2
         grid_h = round(height / 32) * 2
         return grid_w * grid_h
 
     def _resize_image_if_needed(self, image: bytes) -> bytes:
-        """Downscale an image so its processor token budget fits the model.
+        """Downscale an image so its processor budget fits the model.
 
-        The Jina v5 omni *embedding* model rejects images whose processor grid
-        exceeds ~2048 image tokens (observed: <=2024 OK, >=2052 FAIL), regardless
-        of aspect ratio. Preserve aspect ratio and shrink just enough to land
-        under ``self.max_image_tokens`` — wide/short or tall/narrow images keep
-        more resolution than forcing a square cap. Falls back to the original
-        bytes if PIL is unavailable or the decode fails.
+        Two budgets, selected by ``_uses_pixel_budget``:
+
+        - Pixel budget (Qwen3-VL): if the raw area ``w*h`` exceeds
+          ``max_pixels`` (effective default 1_310_720), scale preserving aspect
+          ratio so the output area is <= ``max_pixels``.
+        - Grid-token budget (Jina v5 omni): the embedding model rejects images
+          whose processor grid exceeds ~2048 image tokens (observed: <=2024 OK,
+          >=2052 FAIL), regardless of aspect ratio. Preserve aspect ratio and
+          shrink just enough to land under ``self.max_image_tokens``.
+
+        Falls back to the original bytes if PIL is unavailable or the decode
+        fails.
         """
         try:
             from PIL import Image
@@ -780,6 +819,21 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
             img = Image.open(io.BytesIO(image))
             img.load()
             w, h = img.size
+            if self._uses_pixel_budget():
+                max_pixels = self.max_pixels if self.max_pixels is not None else 1_310_720
+                if w * h <= max_pixels:
+                    return image
+                # scale preserving aspect so area <= max_pixels (floor keeps
+                # the invariant exact: floor(w*s)*floor(h*s) <= w*h*s*s)
+                scale = (max_pixels / (w * h)) ** 0.5
+                nw = max(1, int(w * scale))
+                nh = max(1, int(h * scale))
+                img = img.resize((nw, nh), Image.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                return buf.getvalue()
+
+            # legacy Jina grid-token guard (byte-identical behavior)
             if self._image_grid_tokens(w, h) <= self.max_image_tokens:
                 return image
 

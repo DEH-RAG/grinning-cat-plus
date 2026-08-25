@@ -123,6 +123,86 @@ if __name__ == "__main__":
     )
     print("PASS image item always carries a non-whitespace text part (document_prefix='Document: ')")
 
+    # (d) Jina-regression: _image_grid_tokens must match the ORIGINAL
+    #     Jina-calibrated formula (round(w/32)*2, round(h/32)*2, product) so the
+    #     Jina grid-token guard stays byte-identical. 1040x518 -> 2048 (would
+    #     resize under max_image_tokens=2048), 2000x2000 -> 15376
+    #     (round(62.5)=62 banker's -> 124*124).
+    e_jina = CustomVllmMultimodalEmbedder(
+        base_url="http://127.0.0.1:1",
+        model="jinaai/jina-clip-v2",
+        max_image_tokens=2048,
+    )
+    assert e_jina._image_grid_tokens(1040, 518) == 2048, (
+        f"FAIL Jina regression: expected 2048 tokens for 1040x518, "
+        f"got {e_jina._image_grid_tokens(1040, 518)}"
+    )
+    assert e_jina._image_grid_tokens(2000, 2000) == 15376, (
+        f"FAIL Jina regression: expected 15376 tokens for 2000x2000, "
+        f"got {e_jina._image_grid_tokens(2000, 2000)}"
+    )
+    # a non-qwen model with image_budget=auto must resolve to grid_tokens and
+    # therefore use the Jina formula (not the pixel-budget area check)
+    assert e_jina._uses_pixel_budget() is False, (
+        "FAIL image_budget=auto: non-qwen model must resolve to grid_tokens"
+    )
+    print("PASS Jina regression: _image_grid_tokens matches original formula (1040x518 -> 2048, 2000x2000 -> 15376)")
+
+    # (e) image_budget=auto discriminator: qwen model names -> pixel budget,
+    #     others -> legacy grid-token guard; explicit overrides force either.
+    e_qwen = CustomVllmMultimodalEmbedder(
+        base_url="http://127.0.0.1:1",
+        model="Qwen/Qwen3-VL-Embedding-2B",
+    )
+    assert e_qwen._uses_pixel_budget() is True, (
+        "FAIL image_budget=auto: qwen model must resolve to pixel budget"
+    )
+    e_forced_pixels = CustomVllmMultimodalEmbedder(
+        base_url="http://127.0.0.1:1",
+        model="jinaai/jina-clip-v2",
+        image_budget="pixels",
+    )
+    assert e_forced_pixels._uses_pixel_budget() is True, (
+        "FAIL image_budget=pixels must force the pixel budget"
+    )
+    e_forced_grid = CustomVllmMultimodalEmbedder(
+        base_url="http://127.0.0.1:1",
+        model="Qwen/Qwen3-VL-Embedding-2B",
+        image_budget="grid_tokens",
+    )
+    assert e_forced_grid._uses_pixel_budget() is False, (
+        "FAIL image_budget=grid_tokens must force the legacy grid-token guard"
+    )
+    print("PASS image_budget=auto picks pixels for qwen model names and grid_tokens for others")
+
+    # (f) image resized when over max_pixels: 4000x2000 -> output area <= 1310720.
+    from PIL import Image as _PILImage
+    import io as _io
+
+    _big = _io.BytesIO()
+    _PILImage.new("RGB", (4000, 2000), (255, 255, 255)).save(_big, format="PNG")
+    _resized = e_qwen._resize_image_if_needed(_big.getvalue())
+    _out = _PILImage.open(_io.BytesIO(_resized))
+    _out.load()
+    _ow, _oh = _out.size
+    assert _ow * _oh <= 1310720, (
+        f"FAIL image resized when over max_pixels: output {_ow}x{_oh} "
+        f"area {_ow * _oh} > 1310720"
+    )
+    print("PASS image resized when over max_pixels (4000x2000 -> area <= 1310720)")
+
+    # (g) config defaults: max_pixels None -> effective 1310720, image_budget auto.
+    from embedders.configs import VllmMultimodalConfiguration
+
+    _cfg = VllmMultimodalConfiguration(model="Qwen/Qwen3-VL-Embedding-2B")
+    assert (_cfg.max_pixels or 1310720) == 1310720, (
+        f"FAIL config: expected effective max_pixels 1310720, got {_cfg.max_pixels}"
+    )
+    assert _cfg.image_budget == "auto", (
+        f"FAIL config: expected image_budget 'auto', got {_cfg.image_budget!r}"
+    )
+    print("PASS config defaults (max_pixels None -> 1310720, image_budget auto)")
+
     # (c) IMPORT-SAFETY: the module must be import-safe (zero stdout on import).
     #     We cannot re-import ourselves cleanly here, so we assert the file's
     #     top-level structure: the only non-indented executable statement is
