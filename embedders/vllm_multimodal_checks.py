@@ -203,6 +203,75 @@ if __name__ == "__main__":
     )
     print("PASS config defaults (max_pixels None -> 1310720, image_budget auto)")
 
+    # (h) embed_images returns an ALIGNED list (same length/order as input) with
+    #     None placeholders when every image fails twice (retryable failure).
+    import httpx as _httpx
+
+    e_iso = CustomVllmMultimodalEmbedder(
+        base_url="http://127.0.0.1:1",
+        model="Qwen/Qwen3-VL-Embedding-2B",
+    )
+
+    def _always_connect_error(url, json=None, headers=None, timeout=None):
+        raise _httpx.ConnectError("connection refused")
+
+    with mock.patch.object(embedder_module.httpx, "post", side_effect=_always_connect_error):
+        out = e_iso.embed_images([b"img1", b"img2", b"img3"])
+    assert len(out) == 3, (
+        f"FAIL embed_images aligned length: expected 3, got {len(out)}"
+    )
+    assert all(v is None for v in out), (
+        f"FAIL embed_images double-failure: expected all None, got {out!r}"
+    )
+    print("PASS embed_images returns aligned list length == input, None on double failure")
+
+    # (i) retry happens exactly ONCE with a strictly smaller payload: first
+    #     attempt raises a vLLM 400 RuntimeError, the retry (halved ceiling)
+    #     succeeds and returns a vector; the retried image data URI is smaller.
+    import io as _io2
+    from PIL import Image as _PILImage2
+
+    _big = _io2.BytesIO()
+    _PILImage2.new("RGB", (4000, 2000), (255, 255, 255)).save(_big, format="PNG")
+    _big_bytes = _big.getvalue()
+
+    _captured = []
+    _calls = {"n": 0}
+
+    def _fail_once_then_ok(url, json=None, headers=None, timeout=None):
+        _calls["n"] += 1
+        _captured.append(json)
+        if _calls["n"] == 1:
+            raise RuntimeError("vLLM embedding failed with status 400: processor rejected")
+        return _FakeResponse(1)
+
+    with mock.patch.object(embedder_module.httpx, "post", side_effect=_fail_once_then_ok):
+        out = e_iso.embed_images([_big_bytes])
+    assert _calls["n"] == 2, (
+        f"FAIL retry count: expected exactly 2 HTTP attempts, got {_calls['n']}"
+    )
+    assert out[0] == [0.1, 0.2, 0.3], (
+        f"FAIL retry success: expected the vector after retry, got {out[0]!r}"
+    )
+    _uri1 = _captured[0]["input"][0][0]["content"][-1]["image_url"]["url"]
+    _uri2 = _captured[1]["input"][0][0]["content"][-1]["image_url"]["url"]
+    assert len(_uri2) < len(_uri1), (
+        f"FAIL retry smaller payload: attempt2 URI len {len(_uri2)} not < "
+        f"attempt1 URI len {len(_uri1)}"
+    )
+    print("PASS retry happens exactly once with smaller payload")
+
+    # (j) ValueError (config / unreadable image) is NOT swallowed: it propagates.
+    with mock.patch.object(
+        e_iso, "_to_data_uri", side_effect=ValueError("Unable to read image")
+    ):
+        try:
+            e_iso.embed_images([b"bad"])
+            raise AssertionError("FAIL: ValueError was swallowed by embed_images")
+        except ValueError:
+            pass
+    print("PASS ValueError is not swallowed")
+
     # (c) IMPORT-SAFETY: the module must be import-safe (zero stdout on import).
     #     We cannot re-import ourselves cleanly here, so we assert the file's
     #     top-level structure: the only non-indented executable statement is

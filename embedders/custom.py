@@ -1032,11 +1032,74 @@ class CustomVllmMultimodalEmbedder(MultimodalEmbeddings):
             return self._average_vectors(self._embed_sub_parts(text, prefix=self.query_prefix))
         return self._embed([{"text": text}], prefix=self.query_prefix)[0]
 
-    def embed_image(self, image: str | bytes) -> List[float]:
-        return self._embed([{"image": image}], prefix=self.document_prefix)[0]
+    @staticmethod
+    def _is_retryable_failure(exc: Exception) -> bool:
+        """True if a per-image embed failure is worth ONE retry.
 
-    def embed_images(self, images: List[str | bytes]) -> List[List[float]]:
-        results = []
-        for batch in self._split_batches([{"image": img} for img in images]):
-            results.extend(self._embed(batch, prefix=self.document_prefix))
-        return results
+        Retryable: httpx network/timeout errors (``httpx.HTTPError``) and the
+        vLLM 4xx ``RuntimeError`` we raise from ``_embed`` (message contains
+        "status 4", the format ``f"vLLM embedding failed with status
+        {ret.status_code}: ..."``). Non-retryable errors (ValueError / config
+        errors, or a 5xx / no-data RuntimeError) must propagate, not be
+        swallowed.
+        """
+        if isinstance(exc, httpx.HTTPError):
+            return True
+        return isinstance(exc, RuntimeError) and "status 4" in str(exc)
+
+    def _halved_budget(self) -> tuple[int, int]:
+        """Return ``(max_pixels, max_image_tokens)`` with the ceilings halved.
+
+        Used for the single retry after a retryable image-embed failure so
+        ``_resize_image_if_needed`` produces a strictly smaller payload -- the
+        only lever against a server-side processor rejection (e.g. a Qwen3-VL
+        pixel-budget 400). The effective pixel ceiling is halved (None resolves
+        to the 1_310_720 default first); the Jina grid-token ceiling is halved
+        too so both budget paths shrink.
+        """
+        eff_pixels = self.max_pixels if self.max_pixels is not None else 1_310_720
+        return (max(1, eff_pixels // 2), max(1, self.max_image_tokens // 2))
+
+    def _embed_image_isolated(self, image: str | bytes) -> List[float] | None:
+        """Embed a single image in isolation, retrying once with a smaller payload.
+
+        A retryable failure (vLLM 4xx ``RuntimeError`` or ``httpx.HTTPError``)
+        triggers exactly ONE retry with a halved pixel/grid ceiling so the
+        payload is strictly smaller; if that also fails, returns ``None`` so the
+        caller can skip the image and continue. Non-retryable errors (ValueError
+        / config errors) propagate.
+        """
+        try:
+            return self._embed([{"image": image}], prefix=self.document_prefix)[0]
+        except (httpx.HTTPError, RuntimeError) as exc:
+            if not self._is_retryable_failure(exc):
+                raise
+            log.warning(
+                f"VLLM_EMBEDDINGS image embed failed (retrying once with halved "
+                f"ceiling): {exc}"
+            )
+            orig_pixels, orig_tokens = self.max_pixels, self.max_image_tokens
+            try:
+                self.max_pixels, self.max_image_tokens = self._halved_budget()
+                return self._embed([{"image": image}], prefix=self.document_prefix)[0]
+            except (httpx.HTTPError, RuntimeError) as exc2:
+                if not self._is_retryable_failure(exc2):
+                    raise
+                log.warning(
+                    f"VLLM_EMBEDDINGS image embed failed again after retry; "
+                    f"skipping image: {exc2}"
+                )
+                return None
+            finally:
+                self.max_pixels, self.max_image_tokens = orig_pixels, orig_tokens
+
+    def embed_image(self, image: str | bytes) -> List[float] | None:
+        return self._embed_image_isolated(image)
+
+    def embed_images(self, images: List[str | bytes]) -> List[List[float] | None]:
+        # Each image is embedded in isolation (one request per image, matching
+        # the previous _split_batches image-one-per-request behavior) so a
+        # single failure never aborts the whole batch. The returned list keeps
+        # the SAME length and order as the input, with None placeholders for
+        # images that fail twice, so MyCAT's zip alignment holds.
+        return [self._embed_image_isolated(img) for img in images]
