@@ -31,7 +31,7 @@ def _llm_is_multimodal(cat: Any) -> Optional[bool]:
 
     Returns ``True``/``False`` when the instance carries the capability flag
     (set by the MyPLUS LLM configs), ``None`` when it is unknown (LLM from
-    another provider without the flag) — the caller then keeps the default.
+    another provider without the flag) — the caller then treats it as text-only.
     """
     llm = getattr(cat, "large_language_model", None)
     if llm is None:
@@ -44,18 +44,17 @@ def _llm_is_multimodal(cat: Any) -> Optional[bool]:
 
 @hook(priority=1)
 def llm_vision_capable(capable: bool, cat) -> bool:
-    """Return False when the active chat LLM is known to be text-only.
+    """Return False unless the active chat LLM is explicitly multimodal.
 
     Called by the core before attaching recalled multimodal images to the LLM
-    prompt. ``capable`` is ``True`` when the active embedder is multimodal; a
-    text-only chat LLM (``is_multimodal=False`` on the instance) forces the
-    result to ``False`` so image content is skipped. LLMs without the capability
-    flag keep the default unchanged.
+    prompt. Only LLMs that expose ``is_multimodal=True`` on the instance (e.g.
+    ``OpenRouterLLM``, auto-populated from the OpenRouter catalog on save) get
+    the recalled images; everything else — text-only flags, older LLM configs
+    that carry no flag, unknown LLMs — is treated as text-only and returns
+    ``False``, keeping legacy MyPLUS classes working and skipping image content.
     """
     is_multimodal = _llm_is_multimodal(cat)
-    if is_multimodal is False:
-        log.debug("llm_vision_capable: chat LLM is text-only — recalled images will be skipped")
+    if is_multimodal is not True:
+        log.debug("llm_vision_capable: chat LLM is not explicitly multimodal — recalled images will be skipped")
         return False
-    if is_multimodal is True:
-        return True
-    return capable
+    return True
