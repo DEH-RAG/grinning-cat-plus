@@ -24,7 +24,7 @@ The plugin also adds multimodal parsing behavior (notably image handling) when t
 - `requirements.txt`: Python dependencies for all integrations
 - `factories.py`: hook registration for allowed LLMs, embedders, chunkers, and file managers
 - `rabbithole.py`: parser wiring and multimodal parser switching
-- `llm/`: LLM config models and custom adapters
+- `llms/`: LLM config models and custom adapters
 - `embedder/`: embedder config models and custom adapters
 - `chunker/`: chunker config models and implementations
 - `file_manager/`: storage/file manager config models and implementations
@@ -48,6 +48,23 @@ Enabled via `factory_allowed_llms` in `factories.py`:
 - Anthropic
 - Mistral AI
 - Groq
+- OpenRouter (one `api_key` unlocks models from many providers)
+
+### OpenRouter LLM (`LLMOpenRouterConfig`)
+
+- The `model` field is populated dynamically: the settings schema exposes the
+  currently-available OpenRouter model ids as an **enum** (rendered by the admin
+  as a searchable combo), fetched from `https://openrouter.ai/api/v1/models`
+  (cached 15 min in `llms/openrouter.py`).
+- On save, the plugin's `before_llm_settings_update` hook auto-enriches the stored
+  settings with the selected model's capabilities and costs (best-effort — the
+  save never blocks, even if the catalog is unreachable):
+  - `is_multimodal` / `input_modalities` — for the multimodal pipeline;
+  - `max_token_context` / `max_completion_tokens` — for context-window splitting;
+  - `prompt_cost_per_1m`, `completion_cost_per_1m`, `input_cache_read_cost_per_1m`,
+    `request_cost` — per-1M USD prices used for accounting.
+- The core hook `before_llm_settings_update` (no-op in `base_plugin`, called by
+  `ServiceUpdater` before storing LLM settings) is the extension point.
 
 ### Embedders
 
@@ -136,10 +153,10 @@ Then install/enable the plugin in your host application and select providers fro
 
 Each provider is configured through its corresponding Pydantic settings class under:
 
-- `llm/configs.py`
-- `embedder/configs.py`
-- `chunker/configs.py`
-- `file_manager/configs.py`
+- `llms/configs.py`
+- `embedders/configs.py`
+- `chunkers/configs.py`
+- `file_managers/configs.py`
 
 In the admin UI, these appear using each class `humanReadableName` and expose the required fields (API keys, endpoints, model names, chunking params, etc.).
 
