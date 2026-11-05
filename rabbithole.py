@@ -8,7 +8,7 @@ import nltk
 from cat import hook, BillTheLizard, EmbedderSettings
 from cat.services.service_factory import ServiceFactory
 
-from .parsers import FasterWhisperParser, ExcelParser, OdsParser, UnstructuredParser, YoutubeParser
+from .parsers import FasterWhisperParser, ExcelParser, OdsParser, PowerPointParser, UnstructuredParser, YoutubeParser
 from .parsers.html_preserving_parser import RawHTMLParser
 from .chunkers.custom import HTMLSemanticChunker
 
@@ -178,7 +178,7 @@ async def rabbithole_instantiates_parsers(file_handlers: Dict, cat) -> Dict:
         "extract_image_block_types": [],
     }
     word_parser = UnstructuredParser(**up_options)
-    powerpoint_parser = UnstructuredParser(**up_options)
+    powerpoint_parser = PowerPointParser() if not is_multimodal else UnstructuredParser(**up_options)
 
     supported = _get_unstructured_supported_mimetypes()
     for mime_type, ft in supported.items():
